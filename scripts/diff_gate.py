@@ -145,6 +145,10 @@ def validate_diff(worktree_dir: Path, spec_path: Path, base_branch: str = "dev")
     violations = []
     
     for f in modified:
+        # Excluir bytecode compilado generado en runtime por el intérprete/pytest
+        if f.endswith(".pyc") or "/__pycache__/" in f or f.startswith("__pycache__/"):
+            continue
+            
         # 1. Regla de protección de infraestructura raíz
         if matches_any_pattern(f, PROTECTED_ROOT_PATTERNS):
             violations.append(f"Archivo de infraestructura o gobernanza protegido modificado: '{f}'")
