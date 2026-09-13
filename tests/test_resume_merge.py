@@ -1,15 +1,15 @@
 """
-tests/test_resume_merge.py - Suite de pruebas unitarias y de integración para la ruta --resume-merge.
-Verifica:
-  1. Recuperación válida autorizada por can_resume_merge()
-  2. Bloqueo ante estado incorrecto
-  3. Bloqueo ante HALT_HUMAN por causa ajena a AUTO_MERGE
-  4. Bloqueo cuando no existe la rama task/TASK-ID
-  5. Bloqueo cuando el repositorio principal está sucio
-  6. Fast-Forward merge exitoso y estado COMPLETED
-  7. Bloqueo ante divergencia de ramas (sin rebase automático)
-  8. Aislamiento estricto: cero llamadas a pipeline, Worker, LLMs ni gates
-  9. Preservación estricta de presupuestos (sin incrementos)
+tests/test_resume_merge.py - Unit and integration test suite for the --resume-merge pathway.
+Verifies:
+  1. Valid recovery authorized by can_resume_merge()
+  2. Block on invalid state
+  3. Block on HALT_HUMAN caused by reason other than AUTO_MERGE
+  4. Block when branch task/TASK-ID does not exist
+  5. Block when main repository is dirty
+  6. Successful Fast-Forward merge and COMPLETED status
+  7. Block on branch divergence (no automatic rebase)
+  8. Strict isolation: zero calls to pipeline, Worker, LLMs, or gates
+  9. Strict budget preservation (no increments)
 """
 
 import json
@@ -26,7 +26,7 @@ _spec.loader.exec_module(_mod)
 resume_merge = _mod.resume_merge
 
 def setup_git_repo(repo_dir: Path) -> str:
-    """Inicializa un repositorio Git limpio con la rama dev."""
+    """Initializes a clean Git repository with dev branch."""
     subprocess.run(["git", "init", "-b", "dev"], cwd=repo_dir, capture_output=True, check=True)
     subprocess.run(["git", "config", "user.name", "Test Agent"], cwd=repo_dir, capture_output=True, check=True)
     subprocess.run(["git", "config", "user.email", "agent@test.local"], cwd=repo_dir, capture_output=True, check=True)
@@ -49,13 +49,13 @@ def setup_git_repo(repo_dir: Path) -> str:
     return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo_dir, text=True).strip()
 
 def setup_orchestrator_structure(repo_dir: Path):
-    """Crea la estructura mínima de configuración y estado para pruebas aisladas."""
+    """Creates minimal configuration and state structure for isolated testing."""
     (repo_dir / "orchestrator").mkdir(parents=True, exist_ok=True)
     (repo_dir / "orchestrator" / "state").mkdir(parents=True, exist_ok=True)
 
 
 # ---------------------------------------------------------------------------
-# TEST 1 — Recuperación válida
+# TEST 1 — Valid recovery
 # ---------------------------------------------------------------------------
 def test_can_resume_merge_valid(tmp_path):
     state_dir = tmp_path / "state"
@@ -73,7 +73,7 @@ def test_can_resume_merge_valid(tmp_path):
 
     can_resume, msg = sm.can_resume_merge()
     assert can_resume is True
-    assert "autorizada" in msg.lower()
+    assert "authorized" in msg.lower()
 
 # ---------------------------------------------------------------------------
 # TEST 2 — Estado incorrecto
@@ -334,38 +334,38 @@ def test_resume_merge_does_not_call_pipeline_or_agents(tmp_path, monkeypatch):
 
     def fail_pipeline(*args, **kwargs):
         calls["run_pipeline"] += 1
-        raise AssertionError("run_pipeline NO debe ser llamado durante --resume-merge")
+        raise AssertionError("run_pipeline must NOT be called during --resume-merge")
     monkeypatch.setattr(_mod, "run_pipeline", fail_pipeline)
 
     def fail_worker(*args, **kwargs):
         calls["worker"] += 1
-        raise AssertionError("Worker NO debe ser llamado durante --resume-merge")
+        raise AssertionError("Worker must NOT be called during --resume-merge")
     monkeypatch.setattr("adapters.deepseek_adapter.DeepSeekAdapter.generate_code_and_tests", fail_worker)
 
     def fail_gemini_spec(*args, **kwargs):
         calls["gemini"] += 1
-        raise AssertionError("Gemini Architect NO debe ser llamado durante --resume-merge")
+        raise AssertionError("Gemini Architect must NOT be called during --resume-merge")
     monkeypatch.setattr("adapters.gemini_adapter.GeminiAdapter.generate_spec", fail_gemini_spec)
 
     def fail_triage(*args, **kwargs):
         calls["triage"] += 1
-        raise AssertionError("Triage NO debe ser llamado durante --resume-merge")
+        raise AssertionError("Triage must NOT be called during --resume-merge")
     monkeypatch.setattr("adapters.gemini_adapter.GeminiAdapter.triage_failure", fail_triage)
 
     def fail_tests(*args, **kwargs):
         calls["pytest"] += 1
-        raise AssertionError("test_runner / pytest NO debe ser llamado durante --resume-merge")
+        raise AssertionError("test_runner / pytest must NOT be called during --resume-merge")
     monkeypatch.setattr("scripts.test_runner.run_tests", fail_tests)
 
     def fail_sast(*args, **kwargs):
         calls["sast"] += 1
-        raise AssertionError("sast_runner NO debe ser llamado durante --resume-merge")
+        raise AssertionError("sast_runner must NOT be called during --resume-merge")
     monkeypatch.setattr("scripts.sast_runner.run_sast", fail_sast)
 
     res = resume_merge(task_id, base_branch="dev", repo_root=tmp_path)
     assert res is True
 
-    # Demostrar explícitamente que no se ejecutó ningún agente ni gate
+    # Explicitly demonstrate that no agents or gates were called
     assert calls["run_pipeline"] == 0
     assert calls["worker"] == 0
     assert calls["gemini"] == 0

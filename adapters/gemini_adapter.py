@@ -1,6 +1,6 @@
 """
-adapters/gemini_adapter.py - Adaptador para Gemini (Architect, Triage, Security Filter)
-con soporte dual: API real y Modo Simulación/Mock para pruebas sin consumo de tokens.
+adapters/gemini_adapter.py - Adapter for Gemini (Architect, Triage, Security Filter, Logic Audit)
+with dual support: live API and Mock/Simulation mode for test execution without token consumption.
 """
 
 import os
@@ -11,7 +11,7 @@ from .contracts import TriageOutput, SecurityFilterOutput, LogicAuditOutput
 from .network_retry import retry_with_backoff
 
 def clean_json_text(raw_text: str) -> str:
-    """Extrae JSON limpio eliminando de forma segura los bloques markdown."""
+    """Extract clean JSON by safely stripping Markdown code fences."""
     cleaned = raw_text.strip()
     if cleaned.startswith("```json"):
         cleaned = cleaned[7:].strip()
@@ -29,32 +29,32 @@ class GeminiAdapter:
 
     @retry_with_backoff(max_retries=3, initial_delay=1.0)
     def generate_spec(self, task_id: str, title: str, description: str) -> str:
-        """Rol Architect: Genera el contrato SPEC.md estructurado."""
+        """Architect Role: Generate structured SPEC.md contract."""
         if self.is_simulation:
             return (
                 f"# {task_id}: {title}\n\n"
-                f"## 1. Alcance y Fronteras\n"
-                f"- Archivos permitidos:\n"
+                f"## 1. Scope and Boundaries\n"
+                f"- Allowed files:\n"
                 f"  - `src/{task_id.lower()}/main.py`\n"
                 f"  - `tests/test_{task_id.lower()}.py`\n"
-                f"- Archivos estrictamente prohibidos:\n"
+                f"- Strictly forbidden files:\n"
                 f"  - `pyproject.toml`\n"
                 f"  - `.env`\n\n"
-                f"## 2. Criterios de Aceptación (AC)\n"
+                f"## 2. Acceptance Criteria (AC)\n"
                 f"- [AC-01] {description}\n\n"
-                f"## 3. Invariantes de Seguridad (SEC)\n"
-                f"- [SEC-01] Validar entradas contra inyecciones y no exponer secretos.\n\n"
-                f"## 4. Matriz de Pruebas Requeridas (TEST)\n"
-                f"- [TEST-01] Probar funcionalidad principal y seguridad (Cubre: [AC-01], [SEC-01])\n"
+                f"## 3. Security Invariants (SEC)\n"
+                f"- [SEC-01] Validate input against injections and do not leak secrets.\n\n"
+                f"## 4. Required Test Matrix (TEST)\n"
+                f"- [TEST-01] Test core functionality and security (Covers: [AC-01], [SEC-01])\n"
             )
 
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
         prompt = (
-            f"Actúa como Software Architect. Genera la especificación para '{task_id}: {title}'.\n"
-            f"Descripción: {description}.\n"
-            f"Debes respetar obligatoriamente las 4 secciones:\n"
-            f"## 1. Alcance y Fronteras\n## 2. Criterios de Aceptación\n## 3. Invariantes de Seguridad\n## 4. Matriz de Pruebas Requeridas\n"
-            f"Todos los [AC-xx] y [SEC-xx] deben estar mapeados en la Matriz a [TEST-xx]."
+            f"Act as Software Architect. Generate the specification for '{task_id}: {title}'.\n"
+            f"Description: {description}.\n"
+            f"You must strictly include the 4 sections:\n"
+            f"## 1. Scope and Boundaries\n## 2. Acceptance Criteria\n## 3. Security Invariants\n## 4. Required Test Matrix\n"
+            f"All [AC-xx] and [SEC-xx] must be mapped in the Matrix to [TEST-xx]."
         )
         resp = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
         resp.raise_for_status()
@@ -63,30 +63,30 @@ class GeminiAdapter:
 
     @retry_with_backoff(max_retries=3, initial_delay=1.0)
     def triage_failure(self, failure_payload: dict) -> TriageOutput:
-        """Rol Triage: Analiza el fallo de tests y determina causa raíz."""
+        """Triage Role: Analyze test failure and determine root cause."""
         if self.is_simulation:
             return TriageOutput(
                 failing_test="tests/test_feature.py::test_run",
                 project_file="src/feature/main.py",
                 line_number=42,
-                expected="Retorno True con token válido",
-                received="Retorno False",
-                root_cause="Comparación incorrecta de strings en lugar de digest seguro"
+                expected="Return True with valid token",
+                received="Return False",
+                root_cause="Incorrect string comparison instead of constant-time digest comparison"
             )
 
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
         prompt = (
-            "Actúa como Senior Test Failure Triage Engineer. Analiza este reporte de fallo de pytest.\n"
-            "Debes responder EXCLUSIVAMENTE un JSON válido con este esquema exacto:\n"
+            "Act as Senior Test Failure Triage Engineer. Analyze this pytest failure report.\n"
+            "You must respond EXCLUSIVELY with valid JSON matching this exact schema:\n"
             "{\n"
-            '  "failing_test": "ruta/al/test.py::nombre_test",\n'
-            '  "project_file": "ruta/al/archivo_con_error.py",\n'
+            '  "failing_test": "path/to/test.py::test_name",\n'
+            '  "project_file": "path/to/file_with_error.py",\n'
             '  "line_number": 123,\n'
-            '  "expected": "comportamiento o valor esperado",\n'
-            '  "received": "comportamiento o valor obtenido",\n'
-            '  "root_cause": "explicación clara en texto de la causa raíz"\n'
+            '  "expected": "expected behavior or value",\n'
+            '  "received": "received behavior or value",\n'
+            '  "root_cause": "clear textual explanation of the root cause"\n'
             "}\n\n"
-            f"Reporte de fallo:\n{json.dumps(failure_payload, indent=2)}"
+            f"Failure report:\n{json.dumps(failure_payload, indent=2)}"
         )
         resp = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
         resp.raise_for_status()
@@ -98,24 +98,24 @@ class GeminiAdapter:
 
     @retry_with_backoff(max_retries=3, initial_delay=1.0)
     def filter_security_finding(self, finding: dict) -> SecurityFilterOutput:
-        """Rol Security Filter: Discrimina entre falsos y verdaderos positivos de SAST."""
+        """Security Filter Role: Discriminate between false and true positive SAST findings."""
         if self.is_simulation:
             return SecurityFilterOutput(
                 finding_id=finding.get("check_id", "sec-check-1"),
                 classification="FALSE_POSITIVE",
-                justification="El valor verificado es un mock interno seguro y no una clave productiva expuesta."
+                justification="The analyzed value is a safe internal mock and not an exposed production credential."
             )
 
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
         prompt = (
-            "Actúa como AppSec Engineer. Clasifica este hallazgo SAST.\n"
-            "Debes responder EXCLUSIVAMENTE un JSON válido con este esquema exacto:\n"
+            "Act as AppSec Engineer. Classify this SAST finding.\n"
+            "You must respond EXCLUSIVELY with valid JSON matching this exact schema:\n"
             "{\n"
-            '  "finding_id": "identificador_del_hallazgo",\n'
+            '  "finding_id": "finding_identifier",\n'
             '  "classification": "TRUE_POSITIVE" | "FALSE_POSITIVE" | "UNCERTAIN",\n'
-            '  "justification": "análisis técnico de la clasificación"\n'
+            '  "justification": "technical analysis of the classification"\n'
             "}\n\n"
-            f"Hallazgo SAST:\n{json.dumps(finding, indent=2)}"
+            f"SAST Finding:\n{json.dumps(finding, indent=2)}"
         )
         resp = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
         resp.raise_for_status()
@@ -131,26 +131,26 @@ class GeminiAdapter:
         spec_content: str,
         code_diff: str
     ) -> LogicAuditOutput:
-        """Rol Logic Security: Audita violaciones de invariantes [SEC-xx] y fallos de lógica."""
+        """Logic Security Role: Audit [SEC-xx] invariant violations and business logic flaws."""
         if self.is_simulation:
             return LogicAuditOutput(
                 status="SIMULATED",
                 violated_invariants=[],
                 exploit_poc=None,
-                justification="Auditoría simulada en entorno de pruebas local. No representa una validación real de producción."
+                justification="Simulated audit in local test environment. Does not represent production validation."
             )
 
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
         prompt = (
-            "Actúa como Principal Security Auditor. Evalúa si el código viola invariantes [SEC-xx] de la spec.\n"
-            "Debes responder EXCLUSIVAMENTE un JSON válido con este esquema:\n"
+            "Act as Principal Security Auditor. Evaluate whether the code violates [SEC-xx] invariants from the spec.\n"
+            "You must respond EXCLUSIVELY with valid JSON matching this schema:\n"
             "{\n"
             '  "status": "PASS" | "FAIL" | "UNCERTAIN",\n'
             '  "violated_invariants": ["SEC-xx"],\n'
-            '  "exploit_poc": null | "código de exploit",\n'
-            '  "justification": "análisis detallado"\n'
+            '  "exploit_poc": null | "exploit code",\n'
+            '  "justification": "detailed analysis"\n'
             "}\n\n"
-            f"Spec:\n{spec_content}\n\nDiff implementado:\n{code_diff}"
+            f"Spec:\n{spec_content}\n\nImplemented Diff:\n{code_diff}"
         )
         resp = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=45)
         resp.raise_for_status()

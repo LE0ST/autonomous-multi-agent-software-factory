@@ -1,6 +1,6 @@
 """
-adapters/glm_adapter.py - Adaptador para GLM (Logic Security Audit)
-con soporte dual: API real y Modo Simulación/Mock para auditoría sin consumo de tokens.
+adapters/glm_adapter.py - Adapter for GLM (Logic Security Audit)
+with dual support: live API and Mock/Simulation mode for audit without token consumption.
 """
 
 import os
@@ -11,7 +11,7 @@ from .contracts import LogicAuditOutput
 from .network_retry import retry_with_backoff
 
 def clean_json_text(raw_text: str) -> str:
-    """Extrae JSON limpio eliminando de forma segura los bloques markdown."""
+    """Extract clean JSON by safely stripping Markdown code fences."""
     cleaned = raw_text.strip()
     if cleaned.startswith("```json"):
         cleaned = cleaned[7:].strip()
@@ -33,14 +33,14 @@ class GLMAdapter:
         spec_content: str,
         code_diff: str
     ) -> LogicAuditOutput:
-        """Rol Logic Security: Audita violaciones de invariantes [SEC-xx] y fallos de lógica."""
+        """Logic Security Role: Audit [SEC-xx] invariant violations and business logic flaws."""
         if self.is_simulation:
-            # La simulación NUNCA finge un PASS real para evitar falsas aprobaciones de seguridad
+            # Simulation NEVER fakes a real PASS to prevent false security approvals
             return LogicAuditOutput(
                 status="SIMULATED",
                 violated_invariants=[],
                 exploit_poc=None,
-                justification="Auditoría simulada en entorno de pruebas local. No representa una validación real de producción."
+                justification="Simulated audit in local test environment. Does not represent production validation."
             )
 
         url = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
@@ -52,17 +52,17 @@ class GLMAdapter:
             {
                 "role": "system",
                 "content": (
-                    "Actúa como Principal Security Auditor. Evalúa si el código viola invariantes [SEC-xx] de la spec.\n"
-                    "Debes responder EXCLUSIVAMENTE un JSON válido con este esquema:\n"
+                    "Act as Principal Security Auditor. Evaluate whether the code violates [SEC-xx] invariants from the spec.\n"
+                    "You must respond EXCLUSIVELY with valid JSON matching this schema:\n"
                     "{\n"
                     '  "status": "PASS" | "FAIL" | "UNCERTAIN",\n'
                     '  "violated_invariants": ["SEC-xx"],\n'
-                    '  "exploit_poc": null | "código de exploit",\n'
-                    '  "justification": "análisis detallado"\n'
+                    '  "exploit_poc": null | "exploit code",\n'
+                    '  "justification": "detailed analysis"\n'
                     "}"
                 )
             },
-            {"role": "user", "content": f"Spec:\n{spec_content}\n\nDiff implementado:\n{code_diff}"}
+            {"role": "user", "content": f"Spec:\n{spec_content}\n\nImplemented Diff:\n{code_diff}"}
         ]
         resp = requests.post(url, json={"model": self.model, "messages": messages}, headers=headers, timeout=45)
         resp.raise_for_status()

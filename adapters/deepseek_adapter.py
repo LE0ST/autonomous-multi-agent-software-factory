@@ -7,7 +7,7 @@ from typing import Optional
 from .network_retry import retry_with_backoff
 
 def clean_code_block(content: str) -> str:
-    """Limpia etiquetas de bloques Markdown (```python ... ```) y espacios residuales."""
+    """Clean Markdown code block fences (```python ... ```) and residual whitespace."""
     text = content.strip()
     pattern = r"^```[a-zA-Z0-9_\-\.]*\r?\n(.*?)```$"
     match = re.search(pattern, text, re.DOTALL)
@@ -24,15 +24,15 @@ def clean_code_block(content: str) -> str:
 
 def extract_and_write_files(raw_response: str, worktree_path: Path) -> list[str]:
     """
-    Extrae de forma robusta archivos del texto devuelto por el Worker y los escribe en el worktree.
-    Soporta:
-      1. Formato JSON: {"files": [{"path": "...", "content": "..."}]}
-      2. Formato delimitado por encabezados: ### FILE: <path> \n ```python \n ... ```
-      3. Bloques etiquetados: File: `<path>` \n ``` ... ```
+    Robustly extract files from Worker response text and write them into the worktree.
+    Supports:
+      1. JSON format: {"files": [{"path": "...", "content": "..."}]}
+      2. Header-delimited format: ### FILE: <path> \n ```python \n ... ```
+      3. Tagged blocks: File: `<path>` \n ``` ... ```
     """
     written_files = []
     
-    # 1. Intentar parsear como JSON directo (extrayendo entre la primera { y última })
+    # 1. Attempt direct JSON parsing (extracting between first { and last })
     first_brace = raw_response.find("{")
     last_brace = raw_response.rfind("}")
     if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
@@ -53,7 +53,7 @@ def extract_and_write_files(raw_response: str, worktree_path: Path) -> list[str]
         except Exception:
             pass
 
-    # 2. Parsear bloques delimitados por FILE / Archivo
+    # 2. Parse blocks delimited by FILE / Archivo
     file_block_regex = re.compile(
         r"(?:###|##|\*\*|---\s*\n)?\s*(?:FILE|ARCHIVO|File|Archivo)\s*[:\`]?\s*([a-zA-Z0-9_\-\./\\]+\.[a-zA-Z0-9_]+)[\`\s\*]*\n+```[a-zA-Z0-9_\-]*\r?\n(.*?)```",
         re.DOTALL | re.IGNORECASE
@@ -69,7 +69,7 @@ def extract_and_write_files(raw_response: str, worktree_path: Path) -> list[str]
             written_files.append(norm_path)
         return written_files
 
-    # 3. Fallback: buscar patrones genéricos de path seguido de bloque de código
+    # 3. Fallback: match generic path followed by code block
     generic_block_regex = re.compile(
         r"([a-zA-Z0-9_\-\./\\]+\.(?:py|ts|js|json|md))\s*:\s*\n+```[a-zA-Z0-9_\-]*\r?\n(.*?)```",
         re.DOTALL
@@ -99,9 +99,9 @@ class DeepSeekAdapter:
         worktree_path: Path,
         triage_feedback: Optional[dict] = None
     ) -> list[str]:
-        """Rol Worker: Genera o actualiza el código y los tests dentro del worktree."""
+        """Worker Role: Generate or update code and test files within the worktree."""
         if self.is_simulation:
-            # Generar archivos mock basados en la spec
+            # Generate mock files based on the specification
             src_dir = worktree_path / "src" / "auth"
             src_dir.mkdir(parents=True, exist_ok=True)
             code_file = src_dir / "token_validator.py"
@@ -135,18 +135,18 @@ class DeepSeekAdapter:
             "Content-Type": "application/json"
         }
         system_prompt = (
-            "Actúa como Senior Software Engineer en un entorno de desarrollo autónomo. "
-            "Debes implementar los archivos requeridos por la especificación respetando estrictamente RULES.md.\n"
-            "Formato de respuesta OBLIGATORIO: Por cada archivo que debas crear o modificar, utiliza la sintaxis:\n"
-            "### FILE: <ruta_relativa>\n"
-            "```<lenguaje>\n"
-            "<código fuente completo sin truncar>\n"
+            "Act as Senior Software Engineer in an autonomous software development factory. "
+            "You must implement the files required by the specification strictly obeying RULES.md.\n"
+            "MANDATORY response format: For each file to create or modify, use the syntax:\n"
+            "### FILE: <relative_path>\n"
+            "```<language>\n"
+            "<complete untruncated source code>\n"
             "```\n"
-            "Solo modifica archivos permitidos. No incluyas explicaciones conversacionales fuera de estos bloques."
+            "Only modify allowed files. Do not include conversational explanations outside these blocks."
         )
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Especificación:\n{spec_content}\nFeedback de fallos:\n{json.dumps(triage_feedback or {})}"}
+            {"role": "user", "content": f"Specification:\n{spec_content}\nFailure feedback:\n{json.dumps(triage_feedback or {})}"}
         ]
         resp = requests.post(url, json={"model": self.model, "messages": messages}, headers=headers, timeout=60)
         resp.raise_for_status()
@@ -154,5 +154,5 @@ class DeepSeekAdapter:
         
         written = extract_and_write_files(raw_text, worktree_path)
         if not written:
-            raise ValueError(f"El modelo no devolvió archivos con formato reconocible (### FILE: <path>). Respuesta:\n{raw_text[:300]}")
+            raise ValueError(f"Model returned no recognized file blocks (### FILE: <path>). Response:\n{raw_text[:300]}")
         return written

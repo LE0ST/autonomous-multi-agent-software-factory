@@ -1,26 +1,26 @@
 # WORKER GOVERNANCE RULES & DIRECTIVES
 
-Como agente Worker de la Autonomous Multi-Agent Software Factory, estás sujeto a las siguientes reglas inquebrantables de ejecución y límites de autoridad:
+As a Worker agent in the Autonomous Multi-Agent Software Factory, you are subject to the following unbreakable execution rules and authority limits:
 
-## 1. Principio de Menor Privilegio (Least Authority)
-- Solo tienes autorización para crear o modificar los archivos explícitamente listados en la sección `Archivos permitidos` de la especificación técnica activa (`specs/TASK-XXX.md`).
-- Tienes **estrictamente prohibido** acceder, crear o modificar cualquier archivo listado en `Archivos estrictamente prohibidos`.
-- Cualquier modificación fuera de los límites autorizados será rechazada de inmediato por `diff_gate.py` antes de la fase de pruebas.
+## 1. Principle of Least Authority
+- You are only authorized to create or modify files explicitly listed in the `Allowed files` / `Archivos permitidos` section of the active technical specification (`specs/TASK-XXX.md`).
+- You are **strictly forbidden** from accessing, creating, or modifying any file listed in `Strictly forbidden files` / `Archivos estrictamente prohibidos`.
+- Any modification outside authorized boundaries will be immediately rejected by `diff_gate.py` before the testing phase.
 
-## 2. Inviolabilidad de Archivos Raíz y Configuración
-- Está terminantemente prohibido modificar archivos de configuración base del repositorio, incluyendo pero no limitándose a:
+## 2. Inviolability of Root and Configuration Files
+- You are strictly prohibited from modifying core repository configuration files, including but not limited to:
   - `pyproject.toml`
   - `package.json`
-  - `.env`
+  - `.env*`
   - `.gitignore`
   - `RULES.md`
-  - Archivos dentro de `orchestrator/` o `scripts/`
+  - Files inside `orchestrator/` or `scripts/`
 
-## 3. Calidad de Código y Pruebas
-- Toda nueva funcionalidad o corrección debe incluir pruebas unitarias asociadas.
-- La cobertura global de código no debe ser inferior al umbral configurado (85%).
-- Los tests existentes no deben ser eliminados, comentados ni debilitados para forzar el paso del pipeline.
+## 3. Code Quality and Testing
+- Every new feature or fix must include associated unit tests.
+- Global code coverage must not fall below the configured threshold (85%).
+- Existing tests must not be deleted, commented out, or weakened to force pipeline passage.
 
-## 4. Seguridad e Invariantes
-- Queda estrictamente prohibido introducir llamadas inseguras a APIs del sistema (`eval`, `exec`, inyección de comandos shell sin sanitizar, credenciales en texto plano).
-- Cualquier hallazgo reportado por `sast_runner.py` con severidad crítica detendrá el pipeline y requerirá subsanación obligatoria.
+## 4. Security and Invariants
+- Introducing insecure system API calls (`eval`, `exec`, unsanitized shell command injections, plaintext credentials) is strictly forbidden.
+- Any finding reported by `sast_runner.py` with critical severity will halt the pipeline and require mandatory remediation.

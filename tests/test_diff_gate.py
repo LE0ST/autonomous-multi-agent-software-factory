@@ -36,15 +36,15 @@ def test_parse_spec_boundaries(tmp_path):
     assert "keys/**" in forbidden
 
 def test_protected_root_patterns():
-    # Proteger pyproject.toml
+    # Protect pyproject.toml
     assert matches_any_pattern("pyproject.toml", PROTECTED_ROOT_PATTERNS) is True
-    # Proteger .env
+    # Protect .env
     assert matches_any_pattern(".env", PROTECTED_ROOT_PATTERNS) is True
     assert matches_any_pattern(".env.production", PROTECTED_ROOT_PATTERNS) is True
-    # Proteger orchestrator
+    # Protect orchestrator
     assert matches_any_pattern("orchestrator/state_manager.py", PROTECTED_ROOT_PATTERNS) is True
     assert matches_any_pattern("scripts/diff_gate.py", PROTECTED_ROOT_PATTERNS) is True
-    # Archivos regulares de código no deben ser bloqueados por patrones raíz
+    # Regular code files must not be blocked by root patterns
     assert matches_any_pattern("src/app.py", PROTECTED_ROOT_PATTERNS) is False
 
 def test_forbidden_file_matching():
@@ -52,3 +52,32 @@ def test_forbidden_file_matching():
     assert matches_any_pattern("src/config/secrets.py", forbidden) is True
     assert matches_any_pattern("keys/private.pem", forbidden) is True
     assert matches_any_pattern("src/services/payment.py", forbidden) is False
+
+def test_parse_spec_boundaries_english(tmp_path):
+    spec_content = """# TASK-201: English Boundary Test
+
+## 1. Scope and Boundaries
+- Allowed files:
+  - `src/services/auth.py`
+  - `tests/test_auth.py`
+- Strictly forbidden files:
+  - `src/config/keys.py`
+  - `secrets/**`
+
+## 2. Acceptance Criteria (AC)
+- [AC-01] Validate authentication.
+
+## 3. Security Invariants (SEC)
+- [SEC-01] No cleartext passwords.
+
+## 4. Test Matrix (TEST)
+- [TEST-01] Covers [AC-01], [SEC-01]
+"""
+    spec_path = tmp_path / "SPEC_BOUNDARY_EN.md"
+    spec_path.write_text(spec_content, encoding="utf-8")
+
+    allowed, forbidden = parse_spec_boundaries(spec_path)
+    assert "src/services/auth.py" in allowed
+    assert "tests/test_auth.py" in allowed
+    assert "src/config/keys.py" in forbidden
+    assert "secrets/**" in forbidden

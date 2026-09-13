@@ -1,16 +1,16 @@
 """
-orchestrator/env_loader.py - Cargador automático de credenciales para apis.txt y .env.
-Detecta y mapea claves tanto en formato apis.txt (gemini=, deepseek=, glm=) como .env estándar.
+orchestrator/env_loader.py - Automatic credential loader for apis.txt and .env.
+Detects and maps keys from both apis.txt format (gemini=, deepseek=, glm=) and standard .env.
 """
 
 import os
 from pathlib import Path
 
 def load_api_keys(repo_root: Path = None):
-    """Carga credenciales desde apis.txt o .env si existen en el directorio raíz."""
+    """Load credentials from apis.txt or .env if they exist in the root directory."""
     root = repo_root or Path.cwd()
 
-    # 1. Leer apis.txt si existe
+    # 1. Read apis.txt if present
     apis_file = root / "apis.txt"
     if apis_file.exists():
         try:
@@ -31,7 +31,7 @@ def load_api_keys(repo_root: Path = None):
         except Exception:
             pass
 
-    # 2. Leer .env si existe
+    # 2. Read .env if present
     env_file = root / ".env"
     if env_file.exists():
         try:

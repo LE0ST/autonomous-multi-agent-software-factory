@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-scripts/test_runner.py - Ejecutor determinista de tests y evaluación de cobertura.
-Lee la configuración desde orchestrator/config.json y genera orchestrator/payloads/raw_test_failure.json si falla.
-Exit 0: Tests y Cobertura OK. Exit 1: Falla tests o cobertura insuficiente.
+scripts/test_runner.py - Deterministic test runner and coverage evaluator.
+Reads configuration from orchestrator/config.json and writes orchestrator/payloads/raw_test_failure.json on failure.
+Exit 0: Tests and Coverage OK. Exit 1: Tests failed or insufficient coverage.
 """
 
 import sys
@@ -27,7 +27,7 @@ def run_tests(worktree_dir: Path, repo_root: Path) -> tuple[bool, str, str, int]
     cov_threshold = cfg.get("coverage_threshold", 85.0)
     configured_cmd = cfg.get("test_command")
     
-    # Si existe comando configurado explícito, usarlo adaptando el umbral
+    # If explicit configured command exists, use it adapting the threshold
     if configured_cmd:
         cmd = configured_cmd
     elif (worktree_dir / "package.json").exists():
@@ -62,12 +62,12 @@ if __name__ == "__main__":
         }
         failure_file = payloads_dir / "raw_test_failure.json"
         failure_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        print("[FAIL] Test Gate: FAILED (tests o cobertura insuficiente)")
+        print("[FAIL] Test Gate: FAILED (tests failed or insufficient coverage)")
         if stdout:
             print(stdout)
         if stderr:
             print(stderr, file=sys.stderr)
         sys.exit(1)
         
-    print("[PASS] Test Gate: PASSED (suite y cobertura completadas exitosamente)")
+    print("[PASS] Test Gate: PASSED (test suite and coverage completed successfully)")
     sys.exit(0)

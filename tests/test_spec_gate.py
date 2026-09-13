@@ -46,7 +46,7 @@ def test_missing_section(tmp_path):
     
     valid, msg = validate_spec(spec_file)
     assert valid is False
-    assert "Sección obligatoria faltante" in msg
+    assert "Missing required section" in msg
 
 def test_uncovered_acceptance_criteria(tmp_path):
     spec_content = """# TASK-102: Missing Coverage
@@ -98,7 +98,7 @@ def test_canonical_task_001_file():
     spec_file = Path("specs/TASK-001.md")
     assert spec_file.exists()
     valid, msg = validate_spec(spec_file)
-    assert valid is True, f"TASK-001.md falló la validación: {msg}"
+    assert valid is True, f"TASK-001.md failed validation: {msg}"
 
 def test_permissive_format_table_and_spaces(tmp_path):
     spec_content = """# TASK-104: Permissive Format
@@ -124,5 +124,5 @@ def test_permissive_format_table_and_spaces(tmp_path):
     spec_file.write_text(spec_content, encoding="utf-8")
     
     valid, msg = validate_spec(spec_file)
-    assert valid is True, f"Spec con formato permisivo falló: {msg}"
+    assert valid is True, f"Spec with permissive format failed: {msg}"
     assert "ACs: 2, SECs: 1, TESTs: 2" in msg

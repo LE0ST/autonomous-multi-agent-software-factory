@@ -23,7 +23,7 @@ def cleanup_task(repo_root: Path, task_id: str, reset_commit: str = None):
         except Exception:
             pass
     if reset_commit:
-        # Solo resetear si la rama actual se movió debido al merge del test
+        # Only reset if current branch moved due to test merge
         curr_head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo_root, text=True).strip()
         if curr_head != reset_commit:
             subprocess.run(["git", "checkout", "dev"], cwd=repo_root, capture_output=True)
@@ -96,12 +96,12 @@ def test_e2e_dry_run_success_flow():
         # 6. Diff Gate
         sm.transition("DIFF_GATE")
         diff_ok, diff_rep = validate_diff(wt_path, spec_path, "dev")
-        assert diff_ok is True, f"Diff Gate violado: {diff_rep.get('violations')}"
+        assert diff_ok is True, f"Diff Gate violated: {diff_rep.get('violations')}"
         
         # 7. Testing Gate
         sm.transition("TESTING")
         tests_ok, stdout, stderr, code = run_tests(wt_path, repo_root)
-        assert tests_ok is True, f"Tests fallaron:\n{stdout}\n{stderr}"
+        assert tests_ok is True, f"Tests failed:\n{stdout}\n{stderr}"
         
         # 8. SAST Scan
         sm.transition("SAST_SCAN")
@@ -112,7 +112,7 @@ def test_e2e_dry_run_success_flow():
         sm.transition("AUTO_MERGE")
         remove_worktree(repo_root, task_id)
         merge_ok, merge_msg = execute_fast_forward_merge(repo_root, task_id, "dev")
-        assert merge_ok is True, f"Merge falló: {merge_msg}"
+        assert merge_ok is True, f"Merge failed: {merge_msg}"
         
         sm.set_execution_status("COMPLETED")
         assert sm.data["execution_status"] == "COMPLETED"
@@ -127,12 +127,12 @@ def test_e2e_dry_run_with_retry_flow():
     try:
         sm = StateManager(task_id, state_dir=str(repo_root / "orchestrator" / "state"), raise_on_halt=True)
         
-        # Crear Worktree
+        # Create Worktree
         wt_created, wt_path_str = create_worktree(repo_root, task_id, "dev")
         assert wt_created is True
         wt_path = Path(wt_path_str)
         
-        # Intento 1: Worker introduce código con test defectuoso
+        # Attempt 1: Worker introduces code with failing test
         sm.register_worker_run()
         assert sm.data["budgets"]["worker_attempts_in_epoch"] == 1
         
@@ -154,14 +154,14 @@ def test_e2e_dry_run_with_retry_flow():
         tests_ok, _, _, _ = run_tests(wt_path, repo_root)
         assert tests_ok is False
         
-        # Triage: Worker puede reintentar en la misma época sin consumir logic_replan
+        # Triage: Worker can retry in the same epoch without consuming logic_replan
         assert sm.can_worker_retry_in_epoch() is True
-        sm.transition("TRIAGING", "Diagnóstico de fallo en test_token_fail")
+        sm.transition("TRIAGING", "Diagnosing failure in test_token_fail")
         
-        # Intento 2: Worker corrige el código
+        # Attempt 2: Worker fixes code
         sm.register_worker_run()
         assert sm.data["budgets"]["worker_attempts_in_epoch"] == 2
-        assert sm.data["budgets"]["logic_replans_used"] == 0  # Reintento dentro de la época
+        assert sm.data["budgets"]["logic_replans_used"] == 0  # Retry within epoch
         
         code_file.write_text("def validate_token(token):\n    return token == 'any'\n", encoding="utf-8")
         tests_ok, _, _, _ = run_tests(wt_path, repo_root)

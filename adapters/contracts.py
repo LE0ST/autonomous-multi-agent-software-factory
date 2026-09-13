@@ -1,33 +1,33 @@
 """
-adapters/contracts.py - Esquemas Pydantic para los contratos estructurados entre agentes y compuertas.
+adapters/contracts.py - Pydantic schemas for structured contracts between agents and gates.
 """
 
 from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 class TriageOutput(BaseModel):
-    failing_test: str = Field(..., description="Identificador o ruta del test que falló")
-    project_file: str = Field(..., description="Archivo de código donde se originó el fallo")
-    line_number: int = Field(..., description="Línea aproximada del error")
-    expected: str = Field(..., description="Comportamiento o valor esperado")
-    received: str = Field(..., description="Comportamiento o valor recibido")
-    root_cause: str = Field(..., description="Diagnóstico de la causa raíz")
+    failing_test: str = Field(..., description="Identifier or path of the failing test")
+    project_file: str = Field(..., description="Project source file where the failure originated")
+    line_number: int = Field(..., description="Approximate error line number")
+    expected: str = Field(..., description="Expected behavior or value")
+    received: str = Field(..., description="Received behavior or value")
+    root_cause: str = Field(..., description="Root cause diagnostic explanation")
 
 class SecurityFilterOutput(BaseModel):
-    finding_id: str = Field(..., description="Identificador o regla del hallazgo SAST")
+    finding_id: str = Field(..., description="SAST finding identifier or rule key")
     classification: Literal["TRUE_POSITIVE", "FALSE_POSITIVE", "UNCERTAIN"] = Field(
-        ..., description="Clasificación de la vulnerabilidad"
+        ..., description="Vulnerability classification"
     )
-    justification: str = Field(..., description="Justificación técnica de la clasificación")
+    justification: str = Field(..., description="Technical justification for the classification")
 
 class LogicAuditOutput(BaseModel):
     status: Literal["PASS", "FAIL", "UNAVAILABLE", "SIMULATED", "UNCERTAIN"] = Field(
-        ..., description="Resultado de la auditoría de lógica de negocio e invariantes"
+        ..., description="Logic and security invariants audit outcome"
     )
     violated_invariants: list[str] = Field(
-        default_factory=list, description="Lista de invariantes [SEC-xx] violados"
+        default_factory=list, description="List of violated [SEC-xx] invariants"
     )
     exploit_poc: Optional[str] = Field(
-        None, description="Prueba de concepto o vector de ataque si fue vulnerable"
+        None, description="Proof of concept or exploit vector if vulnerable"
     )
-    justification: str = Field(..., description="Análisis detallado de seguridad y lógica")
+    justification: str = Field(..., description="Detailed security and logic analysis")

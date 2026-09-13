@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-scripts/merge_gate.py - Puerta de integración atómica con Fast-Forward merge a la rama base (dev).
-Valida que el repositorio esté limpio y ejecuta:
+scripts/merge_gate.py - Atomic integration gate with Fast-Forward merge to base branch (dev).
+Validates that the repository is clean and executes:
   git checkout <base_branch> && git merge --ff-only task/<task_id>
-Exit 0 en éxito, Exit 1 si no es posible el fast-forward o hay cambios sin commitear.
+Exit 0 on success, Exit 1 if fast-forward is not possible or there are uncommitted changes.
 """
 
 import sys
@@ -23,15 +23,15 @@ def is_repo_clean(repo_dir: Path) -> tuple[bool, str]:
 def execute_fast_forward_merge(repo_dir: Path, task_id: str, base_branch: str = "dev") -> tuple[bool, str]:
     task_branch = f"task/{task_id}"
     
-    # 1. Comprobar que no haya cambios sucios en el árbol principal
+    # 1. Verify no dirty changes in the main working tree
     clean, dirty_files = is_repo_clean(repo_dir)
     if not clean:
         return False, (
-            f"El repositorio principal tiene modificaciones no commiteadas. Merge abortado.\n"
-            f"Archivos detectados:\n{dirty_files}"
+            f"Main repository has uncommitted modifications. Merge aborted.\n"
+            f"Detected files:\n{dirty_files}"
         )
 
-    # 2. Checkout a la rama base
+    # 2. Checkout base branch
     co_res = subprocess.run(
         ["git", "checkout", base_branch],
         cwd=repo_dir,
@@ -39,9 +39,9 @@ def execute_fast_forward_merge(repo_dir: Path, task_id: str, base_branch: str = 
         text=True
     )
     if co_res.returncode != 0:
-        return False, f"Fallo al hacer checkout a la rama '{base_branch}': {co_res.stderr.strip()}"
+        return False, f"Failed to checkout base branch '{base_branch}': {co_res.stderr.strip()}"
 
-    # 3. Comprobar si base_branch es ancestro directo (condición para Fast-Forward)
+    # 3. Check if base_branch is direct ancestor (condition for Fast-Forward)
     ancestor_check = subprocess.run(
         ["git", "merge-base", "--is-ancestor", base_branch, task_branch],
         cwd=repo_dir,
@@ -50,16 +50,16 @@ def execute_fast_forward_merge(repo_dir: Path, task_id: str, base_branch: str = 
     )
     if ancestor_check.returncode != 0:
         return False, (
-            f"DIVERGENCIA DE ÁRBOL DETECTADA: La rama '{base_branch}' recibió commits manuales "
-            f"mientras el orquestador trabajaba en '{task_branch}'.\n"
-            f"Para resolverlo de forma segura:\n"
+            f"TREE DIVERGENCE DETECTED: The branch '{base_branch}' received manual commits "
+            f"while the orchestrator was working on '{task_branch}'.\n"
+            f"To resolve it safely:\n"
             f"  git checkout {task_branch}\n"
             f"  git rebase {base_branch}\n"
             f"  git checkout {base_branch}\n"
             f"  python scripts/merge_gate.py {task_id} {base_branch}"
         )
 
-    # 4. Ejecutar merge Fast-Forward atómico
+    # 4. Execute atomic Fast-Forward merge
     merge_res = subprocess.run(
         ["git", "merge", "--ff-only", task_branch],
         cwd=repo_dir,
@@ -67,19 +67,19 @@ def execute_fast_forward_merge(repo_dir: Path, task_id: str, base_branch: str = 
         text=True
     )
     if merge_res.returncode != 0:
-        return False, f"El merge Fast-Forward falló: {merge_res.stderr.strip()}"
+        return False, f"Fast-Forward merge failed: {merge_res.stderr.strip()}"
 
-    return True, f"Fusión Fast-Forward exitosa de '{task_branch}' hacia '{base_branch}'."
+    return True, f"Successful Fast-Forward merge of '{task_branch}' into '{base_branch}'."
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Uso: python scripts/merge_gate.py <task_id> [base_branch]")
+        print("Usage: python scripts/merge_gate.py <task_id> [base_branch]")
         sys.exit(1)
         
-    t_id = sys.argv[1]
-    b_branch = sys.argv[2] if len(sys.argv) > 2 else "dev"
+    task_id = sys.argv[1]
+    base_branch = sys.argv[2] if len(sys.argv) > 2 else "dev"
     root_dir = Path.cwd()
     
-    passed, msg = execute_fast_forward_merge(root_dir, t_id, b_branch)
+    passed, msg = execute_fast_forward_merge(root_dir, task_id, base_branch)
     print(f"[{'PASS' if passed else 'FAIL'}] Merge Gate: {msg}")
     sys.exit(0 if passed else 1)
