@@ -54,8 +54,8 @@ def run_pipeline(task_id: str, base_branch: str = "dev", simulate: bool = False)
 
     # Inicializar Adaptadores con configuración de roles
     roles = config.get("roles", {})
-    architect_model = roles.get("architect", {}).get("model", "gemini-3.6-flash")
-    worker_model = roles.get("worker", {}).get("model", "deepseek-chat")
+    architect_model = roles.get("architect", {}).get("model", "gemini-3.8-flash")
+    worker_model = roles.get("worker", {}).get("model", "deepseek-flash")
     triage_model = roles.get("triage", {}).get("model", "gemini-3.5-flash-lite")
     
     sec_role = roles.get("logic_security", {})
