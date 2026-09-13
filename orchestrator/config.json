@@ -12,11 +12,11 @@
   "roles": {
     "architect": {
       "provider": "gemini",
-      "model": "gemini-3.8-flash"
+      "model": "gemini-3.6-flash"
     },
     "worker": {
       "provider": "deepseek",
-      "model": "deepseek-flash"
+      "model": "deepseek-chat"
     },
     "triage": {
       "provider": "gemini",

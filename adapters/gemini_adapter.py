@@ -7,7 +7,7 @@ import os
 import json
 import requests
 from typing import Optional
-from .contracts import TriageOutput, SecurityFilterOutput
+from .contracts import TriageOutput, SecurityFilterOutput, LogicAuditOutput
 from .network_retry import retry_with_backoff
 
 def clean_json_text(raw_text: str) -> str:
@@ -109,3 +109,39 @@ class GeminiAdapter:
         cleaned = clean_json_text(raw_text)
         parsed = json.loads(cleaned, strict=False)
         return SecurityFilterOutput(**parsed)
+
+    @retry_with_backoff(max_retries=3, initial_delay=1.0)
+    def audit_logic_and_security(
+        self,
+        spec_content: str,
+        code_diff: str
+    ) -> LogicAuditOutput:
+        """Rol Logic Security: Audita violaciones de invariantes [SEC-xx] y fallos de lógica."""
+        if self.is_simulation:
+            return LogicAuditOutput(
+                status="SIMULATED",
+                violated_invariants=[],
+                exploit_poc=None,
+                justification="Auditoría simulada en entorno de pruebas local. No representa una validación real de producción."
+            )
+
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
+        prompt = (
+            "Actúa como Principal Security Auditor. Evalúa si el código viola invariantes [SEC-xx] de la spec.\n"
+            "Debes responder EXCLUSIVAMENTE un JSON válido con este esquema:\n"
+            "{\n"
+            '  "status": "PASS" | "FAIL" | "UNCERTAIN",\n'
+            '  "violated_invariants": ["SEC-xx"],\n'
+            '  "exploit_poc": null | "código de exploit",\n'
+            '  "justification": "análisis detallado"\n'
+            "}\n\n"
+            f"Spec:\n{spec_content}\n\nDiff implementado:\n{code_diff}"
+        )
+        resp = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=45)
+        resp.raise_for_status()
+        data = resp.json()
+        raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
+        cleaned = clean_json_text(raw_text)
+        parsed = json.loads(cleaned, strict=False)
+        return LogicAuditOutput(**parsed)
+

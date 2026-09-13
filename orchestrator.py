@@ -54,19 +54,26 @@ def run_pipeline(task_id: str, base_branch: str = "dev", simulate: bool = False)
 
     # Inicializar Adaptadores con configuración de roles
     roles = config.get("roles", {})
-    architect_model = roles.get("architect", {}).get("model", "gemini-1.5-pro")
+    architect_model = roles.get("architect", {}).get("model", "gemini-3.6-flash")
     worker_model = roles.get("worker", {}).get("model", "deepseek-chat")
-    triage_model = roles.get("triage", {}).get("model", "gemini-1.5-flash")
-    sec_model = roles.get("logic_security", {}).get("model", "glm-4")
+    triage_model = roles.get("triage", {}).get("model", "gemini-3.5-flash-lite")
+    
+    sec_role = roles.get("logic_security", {})
+    sec_provider = sec_role.get("provider", "glm")
+    sec_model = sec_role.get("model", "glm-5.3")
 
     gemini_client = GeminiAdapter(model=architect_model)
     worker_client = DeepSeekAdapter(model=worker_model)
-    glm_client = GLMAdapter(model=sec_model)
+    
+    if sec_provider == "gemini":
+        sec_client = GeminiAdapter(model=sec_model)
+    else:
+        sec_client = GLMAdapter(model=sec_model)
 
     if simulate:
         gemini_client.is_simulation = True
         worker_client.is_simulation = True
-        glm_client.is_simulation = True
+        sec_client.is_simulation = True
 
     # 3. SPEC DESIGN & SPEC GATE
     spec_path = repo_root / "specs" / f"{task_id}.md"
@@ -177,11 +184,11 @@ def run_pipeline(task_id: str, base_branch: str = "dev", simulate: bool = False)
                 continue
 
         # LOGIC AUDIT
-        sm.transition("LOGIC_AUDIT", "Ejecutando auditoría de invariantes de seguridad (GLM)...")
+        sm.transition("LOGIC_AUDIT", f"Ejecutando auditoría de invariantes de seguridad ({sec_provider.upper()})...")
         diff_output = subprocess.check_output(["git", "diff", f"{base_branch}...HEAD"], cwd=wt_path, text=True)
         
         try:
-            audit_res = glm_client.audit_logic_and_security(spec_path.read_text(encoding="utf-8"), diff_output)
+            audit_res = sec_client.audit_logic_and_security(spec_path.read_text(encoding="utf-8"), diff_output)
         except NetworkTransportError as e:
             print(f"\n[!] Servicio de Auditoría de Seguridad no disponible: {e}")
             sm.request_human_review(
