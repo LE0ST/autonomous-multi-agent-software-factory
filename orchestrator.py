@@ -13,6 +13,7 @@ import subprocess
 from pathlib import Path
 
 from orchestrator.state_manager import StateManager
+from orchestrator.env_loader import load_api_keys
 from scripts.discovery import run_discovery
 from scripts.spec_gate import validate_spec
 from scripts.diff_gate import validate_diff
@@ -30,6 +31,9 @@ def load_orchestrator_config(repo_root: Path) -> dict:
 
 def run_pipeline(task_id: str, base_branch: str = "dev", simulate: bool = False):
     repo_root = Path.cwd()
+    # Cargar automáticamente credenciales desde apis.txt o .env
+    load_api_keys(repo_root)
+
     print(f"\n========================================================")
     print(f"[*] INICIANDO PIPELINE: {task_id} (Base: {base_branch})")
     print(f"========================================================\n")

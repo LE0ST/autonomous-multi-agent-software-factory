@@ -15,3 +15,9 @@ CRASH_REPORT_*.md
 .pytest_cache/
 .coverage
 htmlcov/
+
+# API Keys and Secrets
+apis.txt
+.env
+.env.*
+!*.example

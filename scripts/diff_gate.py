@@ -20,6 +20,7 @@ PROTECTED_ROOT_PATTERNS = [
     "package.json",
     "package-lock.json",
     ".env*",
+    "apis.txt",
     ".gitignore",
     ".semgrepignore",
     "RULES.md",
