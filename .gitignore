@@ -1,0 +1,17 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Git Worktrees
+.worktrees/
+
+# Orchestrator dynamic artifacts
+orchestrator/state/state_*.json
+orchestrator/payloads/*.json
+CRASH_REPORT_*.md
+
+# Testing and Coverage
+.pytest_cache/
+.coverage
+htmlcov/
