@@ -76,8 +76,17 @@ class GeminiAdapter:
 
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
         prompt = (
-            f"Analiza este reporte de fallo de pruebas y devuelve un JSON conforme a TriageOutput:\n"
-            f"{json.dumps(failure_payload, indent=2)}"
+            "Actúa como Senior Test Failure Triage Engineer. Analiza este reporte de fallo de pytest.\n"
+            "Debes responder EXCLUSIVAMENTE un JSON válido con este esquema exacto:\n"
+            "{\n"
+            '  "failing_test": "ruta/al/test.py::nombre_test",\n'
+            '  "project_file": "ruta/al/archivo_con_error.py",\n'
+            '  "line_number": 123,\n'
+            '  "expected": "comportamiento o valor esperado",\n'
+            '  "received": "comportamiento o valor obtenido",\n'
+            '  "root_cause": "explicación clara en texto de la causa raíz"\n'
+            "}\n\n"
+            f"Reporte de fallo:\n{json.dumps(failure_payload, indent=2)}"
         )
         resp = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
         resp.raise_for_status()
@@ -99,8 +108,14 @@ class GeminiAdapter:
 
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
         prompt = (
-            f"Clasifica este hallazgo SAST como TRUE_POSITIVE, FALSE_POSITIVE o UNCERTAIN:\n"
-            f"{json.dumps(finding, indent=2)}"
+            "Actúa como AppSec Engineer. Clasifica este hallazgo SAST.\n"
+            "Debes responder EXCLUSIVAMENTE un JSON válido con este esquema exacto:\n"
+            "{\n"
+            '  "finding_id": "identificador_del_hallazgo",\n'
+            '  "classification": "TRUE_POSITIVE" | "FALSE_POSITIVE" | "UNCERTAIN",\n'
+            '  "justification": "análisis técnico de la clasificación"\n'
+            "}\n\n"
+            f"Hallazgo SAST:\n{json.dumps(finding, indent=2)}"
         )
         resp = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
         resp.raise_for_status()
