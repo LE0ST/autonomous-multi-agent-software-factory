@@ -223,3 +223,39 @@ class StateManager:
         if self.raise_on_halt:
             raise RuntimeError(f"Revisión humana requerida ({gate}): {reason}")
         sys.exit(0)
+
+    def can_resume_merge(self) -> tuple[bool, str]:
+        """
+        Valida de forma read-only si la tarea está autorizada para recuperación de merge.
+        Condiciones requeridas:
+          - current_state == 'HALT_HUMAN'
+          - execution_status == 'FAILED'
+          - Última transición en history: from 'AUTO_MERGE' to 'HALT_HUMAN'
+          - Razón del fallo en la última transición corresponde al fallo de merge
+        """
+        curr_state = self.data.get("current_state")
+        if curr_state != "HALT_HUMAN":
+            return False, f"current_state debe ser 'HALT_HUMAN', actual: '{curr_state}'"
+
+        exec_status = self.data.get("execution_status")
+        if exec_status != "FAILED":
+            return False, f"execution_status debe ser 'FAILED', actual: '{exec_status}'"
+
+        history = self.data.get("history", [])
+        if not history:
+            return False, "El historial de transiciones está vacío."
+
+        last_trans = history[-1]
+        from_state = last_trans.get("from")
+        to_state = last_trans.get("to")
+        if from_state != "AUTO_MERGE" or to_state != "HALT_HUMAN":
+            return False, (
+                f"La última transición debe ser 'AUTO_MERGE -> HALT_HUMAN', "
+                f"actual: '{from_state} -> {to_state}'"
+            )
+
+        details = last_trans.get("details", "")
+        if "merge" not in details.lower():
+            return False, f"La causa del fallo no corresponde a un fallo de merge: '{details}'"
+
+        return True, "Tarea autorizada para recuperación de merge."

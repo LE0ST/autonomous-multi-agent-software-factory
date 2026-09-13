@@ -19,7 +19,7 @@ from scripts.spec_gate import validate_spec
 from scripts.diff_gate import validate_diff
 from scripts.test_runner import run_tests
 from scripts.sast_runner import run_sast, EXIT_NO_FINDINGS, EXIT_FINDINGS
-from scripts.merge_gate import execute_fast_forward_merge
+from scripts.merge_gate import execute_fast_forward_merge, is_repo_clean
 from scripts.worktree_manager import create_worktree, remove_worktree
 from adapters import GeminiAdapter, DeepSeekAdapter, GLMAdapter, NetworkTransportError
 
@@ -238,11 +238,75 @@ def run_pipeline(task_id: str, base_branch: str = "dev", simulate: bool = False)
     print(f"\n[PASS] PIPELINE COMPLETADO EXITOSAMENTE PARA {task_id}!")
     print(f"       Rama 'task/{task_id}' fusionada Fast-Forward en '{base_branch}'.")
 
+def resume_merge(task_id: str, base_branch: str = "dev", repo_root: Path | None = None) -> bool:
+    """
+    Ruta de recuperación determinista de merge.
+    No ejecuta agentes, no incrementa presupuestos, no llama LLMs ni crea épocas.
+    """
+    root = repo_root or Path.cwd()
+    config_file = root / "orchestrator" / "config.json"
+    state_dir = root / "orchestrator" / "state"
+
+    # 1. Cargar StateManager
+    sm = StateManager(
+        task_id,
+        config_path=str(config_file),
+        state_dir=str(state_dir),
+        raise_on_halt=False
+    )
+
+    # 2. Validar autorización de recuperación (read-only)
+    can_resume, reason = sm.can_resume_merge()
+    if not can_resume:
+        print(f"[!] RECUPERACIÓN DE MERGE DENEGADA para {task_id}: {reason}")
+        return False
+
+    # 3. Verificar que existe la rama task/<task_id>
+    task_branch = f"task/{task_id}"
+    branch_check = subprocess.run(
+        ["git", "branch", "--list", task_branch],
+        cwd=root,
+        capture_output=True,
+        text=True
+    )
+    branch_names = [b.strip().lstrip("* ") for b in branch_check.stdout.splitlines()]
+    if task_branch not in branch_names:
+        print(f"[!] RECUPERACIÓN DE MERGE DENEGADA: La rama '{task_branch}' no existe.")
+        return False
+
+    # 4. Verificar que el repositorio principal está limpio
+    clean, dirty_files = is_repo_clean(root)
+    if not clean:
+        print(
+            f"[!] RECUPERACIÓN DE MERGE DENEGADA: El repositorio principal tiene modificaciones no commiteadas.\n"
+            f"Archivos detectados:\n{dirty_files}"
+        )
+        return False
+
+    # 5. Ejecutar Fast-Forward merge delegando en merge_gate existente
+    print(f"[+] Ejecutando recuperación de merge Fast-Forward para {task_id} hacia '{base_branch}'...")
+    merge_passed, merge_msg = execute_fast_forward_merge(root, task_id, base_branch)
+    if not merge_passed:
+        print(f"[!] Fallo durante el merge Fast-Forward: {merge_msg}")
+        return False
+
+    # 6. Marcar como COMPLETED únicamente tras éxito
+    sm.transition("AUTO_MERGE", f"Recuperación exitosa de merge Fast-Forward en '{base_branch}'.")
+    sm.set_execution_status("COMPLETED")
+    print(f"\n[PASS] RECUPERACIÓN DE MERGE COMPLETADA EXITOSAMENTE PARA {task_id}!")
+    print(f"       Rama '{task_branch}' fusionada Fast-Forward en '{base_branch}'.")
+    return True
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Orquestador Autónomo de Software Multi-Agente")
     parser.add_argument("task_id", help="Identificador de la tarea (ej: TASK-001)")
     parser.add_argument("--base", default="dev", help="Rama base de integración (por defecto: dev)")
     parser.add_argument("--simulate", action="store_true", help="Modo simulación / dry-run sin gastar tokens de API")
+    parser.add_argument("--resume-merge", action="store_true", help="Recupera deterministamente el merge de una tarea autorizada")
     args = parser.parse_args()
+
+    if args.resume_merge:
+        success = resume_merge(args.task_id, args.base)
+        sys.exit(0 if success else 1)
 
     run_pipeline(args.task_id, args.base, args.simulate)
