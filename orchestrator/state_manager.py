@@ -117,14 +117,22 @@ class StateManager:
 
     def register_worker_run(self) -> bool:
         """Registra un intento de compilación/código del Worker."""
+        # 1. Comprobación del límite por época antes de incrementar
+        if self.data["budgets"]["worker_attempts_in_epoch"] >= self.data["budgets"]["max_worker_per_epoch"]:
+            self.halt_human(
+                f"Límite de intentos del Worker por época superado "
+                f"({self.data['budgets']['max_worker_per_epoch']} intentos por época)."
+            )
+            return False
+
+        # 2. Comprobación del techo global acumulado antes de incrementar
+        if self.data["budgets"]["total_cumulative_worker_runs"] >= self.data["budgets"]["max_cumulative_worker_runs"]:
+            self.halt_human("Presupuesto global acumulado de compilaciones superado (techo de 5 runs).")
+            return False
+
         self.data["budgets"]["total_cumulative_worker_runs"] += 1
         self.data["budgets"]["worker_attempts_in_epoch"] += 1
         self.save()
-
-        # Chequeo de techo global acumulado
-        if self.data["budgets"]["total_cumulative_worker_runs"] > self.data["budgets"]["max_cumulative_worker_runs"]:
-            self.halt_human("Presupuesto global acumulado de compilaciones superado (techo de 5 runs).")
-            return False
         return True
 
     def can_worker_retry_in_epoch(self) -> bool:

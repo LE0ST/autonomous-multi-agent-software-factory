@@ -58,12 +58,20 @@ def test_circuit_breaker_on_cumulative_worker_runs(tmp_path, monkeypatch):
     state_dir = tmp_path / "state"
     sm = StateManager("TASK-CB-01", state_dir=str(state_dir), raise_on_halt=True)
     
-    # Ejecutar 5 runs
-    for _ in range(5):
-        sm.register_worker_run()
+    # Ejecutar 5 runs distribuidos a través de épocas válidas
+    # Época 1 (2 runs)
+    sm.register_worker_run()
+    sm.register_worker_run()
+    sm.consume_logic_replan("replan 1")
+    # Época 2 (2 runs)
+    sm.register_worker_run()
+    sm.register_worker_run()
+    sm.consume_logic_replan("replan 2")
+    # Época 3 (1 run -> 5 total acumulados)
+    sm.register_worker_run()
     assert sm.data["budgets"]["total_cumulative_worker_runs"] == 5
     
-    # El 6to run debe disparar Circuit Breaker
+    # El 6to run debe disparar Circuit Breaker por techo acumulado independiente
     with pytest.raises(RuntimeError, match="Circuit Breaker activado.*Presupuesto global"):
         sm.register_worker_run()
         
@@ -73,6 +81,32 @@ def test_circuit_breaker_on_cumulative_worker_runs(tmp_path, monkeypatch):
     report = tmp_path / "CRASH_REPORT_TASK-CB-01.md"
     assert report.exists()
     assert "CIRCUIT BREAKER ACTIVADO" in report.read_text(encoding="utf-8")
+
+def test_circuit_breaker_on_worker_attempts_in_epoch(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    state_dir = tmp_path / "state"
+    sm = StateManager("TASK-EPOCH-01", state_dir=str(state_dir), raise_on_halt=True)
+
+    # 1. Con worker_attempts_in_epoch = 0 se permite el 1er Worker
+    assert sm.data["budgets"]["worker_attempts_in_epoch"] == 0
+    assert sm.register_worker_run() is True
+    assert sm.data["budgets"]["worker_attempts_in_epoch"] == 1
+    assert sm.data["budgets"]["total_cumulative_worker_runs"] == 1
+
+    # 2. Con worker_attempts_in_epoch = 1 se permite el 2do Worker
+    assert sm.register_worker_run() is True
+    assert sm.data["budgets"]["worker_attempts_in_epoch"] == 2
+    assert sm.data["budgets"]["total_cumulative_worker_runs"] == 2
+
+    # 3. Con worker_attempts_in_epoch = 2 se bloquea el 3er Worker antes de incrementar
+    with pytest.raises(RuntimeError, match="Circuit Breaker activado.*Límite de intentos del Worker por época superado"):
+        sm.register_worker_run()
+
+    # Los contadores deben permanecer intactos y FSM en HALT_HUMAN
+    assert sm.data["budgets"]["worker_attempts_in_epoch"] == 2
+    assert sm.data["budgets"]["total_cumulative_worker_runs"] == 2
+    assert sm.data["current_state"] == "HALT_HUMAN"
+    assert sm.data["execution_status"] == "FAILED"
 
 def test_circuit_breaker_on_security_replans(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)

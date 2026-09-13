@@ -27,8 +27,8 @@
       "model": "gemini-3.5-flash-lite"
     },
     "logic_security": {
-      "provider": "glm",
-      "model": "glm-5.3"
+      "provider": "gemini",
+      "model": "gemini-3.8-flash"
     }
   }
 }
