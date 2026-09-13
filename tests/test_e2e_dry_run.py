@@ -14,7 +14,7 @@ from scripts.sast_runner import run_sast, EXIT_NO_FINDINGS
 from scripts.merge_gate import execute_fast_forward_merge
 from scripts.worktree_manager import create_worktree, remove_worktree
 
-def cleanup_task(repo_root: Path, task_id: str):
+def cleanup_task(repo_root: Path, task_id: str, reset_commit: str = None):
     remove_worktree(repo_root, task_id, delete_branch=True)
     state_file = repo_root / "orchestrator" / "state" / f"state_{task_id}.json"
     if state_file.exists():
@@ -22,11 +22,15 @@ def cleanup_task(repo_root: Path, task_id: str):
             state_file.unlink()
         except Exception:
             pass
+    if reset_commit:
+        subprocess.run(["git", "checkout", "dev"], cwd=repo_root, capture_output=True)
+        subprocess.run(["git", "reset", "--hard", reset_commit], cwd=repo_root, capture_output=True)
 
 def test_e2e_dry_run_success_flow():
     task_id = "TASK-E2E-SUCCESS"
     repo_root = Path.cwd()
-    cleanup_task(repo_root, task_id)
+    initial_head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo_root, text=True).strip()
+    cleanup_task(repo_root, task_id, reset_commit=initial_head)
     
     try:
         spec_path = repo_root / "specs" / "TASK-001.md"
@@ -100,7 +104,6 @@ def test_e2e_dry_run_success_flow():
         
         # 9. Auto Merge
         sm.transition("AUTO_MERGE")
-        # Remover worktree antes del merge a dev
         remove_worktree(repo_root, task_id)
         merge_ok, merge_msg = execute_fast_forward_merge(repo_root, task_id, "dev")
         assert merge_ok is True, f"Merge falló: {merge_msg}"
@@ -108,7 +111,7 @@ def test_e2e_dry_run_success_flow():
         sm.set_execution_status("COMPLETED")
         assert sm.data["execution_status"] == "COMPLETED"
     finally:
-        cleanup_task(repo_root, task_id)
+        cleanup_task(repo_root, task_id, reset_commit=initial_head)
 
 def test_e2e_dry_run_with_retry_flow():
     task_id = "TASK-E2E-RETRY"
