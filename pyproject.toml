@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autonomous-software-factory"
+version = "0.1.0"
+description = "Autonomous Multi-Agent Software Factory with Deterministic Verification and FSM Control"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.0",
+    "requests>=2.28.0",
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",
+    "semgrep>=1.0.0",
+    "bandit>=1.7.0",
+]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-q --import-mode=importlib"

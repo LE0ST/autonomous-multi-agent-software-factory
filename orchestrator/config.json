@@ -1,0 +1,34 @@
+{
+  "coverage_threshold": 85.0,
+  "base_branch": "dev",
+  "test_command": "python -m pytest --cov=src --cov-fail-under=85 -q",
+  "budgets": {
+    "max_logic_replans": 2,
+    "max_security_replans": 1,
+    "max_spec_syntax_retries": 1,
+    "max_worker_per_epoch": 2,
+    "max_cumulative_worker_runs": 5
+  },
+  "roles": {
+    "architect": {
+      "provider": "gemini",
+      "model": "gemini-1.5-pro"
+    },
+    "worker": {
+      "provider": "deepseek",
+      "model": "deepseek-chat"
+    },
+    "triage": {
+      "provider": "gemini",
+      "model": "gemini-1.5-flash"
+    },
+    "security_filter": {
+      "provider": "gemini",
+      "model": "gemini-1.5-flash"
+    },
+    "logic_security": {
+      "provider": "glm",
+      "model": "glm-4"
+    }
+  }
+}

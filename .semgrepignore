@@ -1,0 +1,11 @@
+tests/
+specs/
+**/*.spec.ts
+**/*.test.ts
+**/*.test.py
+**/mocks/**
+node_modules/
+.venv/
+venv/
+orchestrator/
+scripts/
