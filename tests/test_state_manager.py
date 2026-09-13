@@ -94,3 +94,26 @@ def test_interrupted_recovery(tmp_path):
     # Simular reinicio / nueva instancia
     sm2 = StateManager("TASK-REC", state_dir=str(state_dir), raise_on_halt=True)
     assert sm2.data["execution_status"] == "INTERRUPTED"
+
+def test_request_human_review(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    state_dir = tmp_path / "state"
+    sm = StateManager("TASK-HR-01", state_dir=str(state_dir), raise_on_halt=True)
+
+    with pytest.raises(RuntimeError, match="Revisión humana requerida"):
+        sm.request_human_review(reason="429 Rate limit excedido en GLM", gate="LOGIC_AUDIT")
+
+    assert sm.data["current_state"] == "HUMAN_REVIEW"
+    assert sm.data["execution_status"] == "NEEDS_HUMAN_REVIEW"
+    assert sm.data["blocked_reason"]["gate"] == "LOGIC_AUDIT"
+    assert "429 Rate limit" in sm.data["blocked_reason"]["reason"]
+
+    # Verificar que NO se consumieron presupuestos del Worker ni replans
+    assert sm.data["budgets"]["worker_attempts_in_epoch"] == 0
+    assert sm.data["budgets"]["total_cumulative_worker_runs"] == 0
+    assert sm.data["budgets"]["security_replans_used"] == 0
+    assert sm.data["budgets"]["logic_replans_used"] == 0
+
+    report = tmp_path / "HUMAN_REVIEW_TASK-HR-01.md"
+    assert report.exists()
+    assert "REVISIÓN HUMANA REQUERIDA" in report.read_text(encoding="utf-8")

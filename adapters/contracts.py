@@ -21,7 +21,7 @@ class SecurityFilterOutput(BaseModel):
     justification: str = Field(..., description="Justificación técnica de la clasificación")
 
 class LogicAuditOutput(BaseModel):
-    status: Literal["PASS", "FAIL", "UNCERTAIN"] = Field(
+    status: Literal["PASS", "FAIL", "UNAVAILABLE", "SIMULATED", "UNCERTAIN"] = Field(
         ..., description="Resultado de la auditoría de lógica de negocio e invariantes"
     )
     violated_invariants: list[str] = Field(

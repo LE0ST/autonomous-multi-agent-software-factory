@@ -10,6 +10,17 @@ from typing import Optional
 from .contracts import LogicAuditOutput
 from .network_retry import retry_with_backoff
 
+def clean_json_text(raw_text: str) -> str:
+    """Extrae JSON limpio eliminando de forma segura los bloques markdown."""
+    cleaned = raw_text.strip()
+    if cleaned.startswith("```json"):
+        cleaned = cleaned[7:].strip()
+    elif cleaned.startswith("```"):
+        cleaned = cleaned[3:].strip()
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3].strip()
+    return cleaned
+
 class GLMAdapter:
     def __init__(self, model: str = "glm-4", api_key: Optional[str] = None):
         self.model = model
@@ -24,11 +35,12 @@ class GLMAdapter:
     ) -> LogicAuditOutput:
         """Rol Logic Security: Audita violaciones de invariantes [SEC-xx] y fallos de lógica."""
         if self.is_simulation:
+            # La simulación NUNCA finge un PASS real para evitar falsas aprobaciones de seguridad
             return LogicAuditOutput(
-                status="PASS",
+                status="SIMULATED",
                 violated_invariants=[],
                 exploit_poc=None,
-                justification="Auditoría formal superada: los algoritmos criptográficos utilizados son seguros y no hay fugas de secretos."
+                justification="Auditoría simulada en entorno de pruebas local. No representa una validación real de producción."
             )
 
         url = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
@@ -37,12 +49,24 @@ class GLMAdapter:
             "Content-Type": "application/json"
         }
         messages = [
-            {"role": "system", "content": "Actúa como Principal Security Auditor. Evalúa si el código viola invariantes [SEC-xx] de la spec. Devuelve un JSON conforme a LogicAuditOutput."},
+            {
+                "role": "system",
+                "content": (
+                    "Actúa como Principal Security Auditor. Evalúa si el código viola invariantes [SEC-xx] de la spec.\n"
+                    "Debes responder EXCLUSIVAMENTE un JSON válido con este esquema:\n"
+                    "{\n"
+                    '  "status": "PASS" | "FAIL" | "UNCERTAIN",\n'
+                    '  "violated_invariants": ["SEC-xx"],\n'
+                    '  "exploit_poc": null | "código de exploit",\n'
+                    '  "justification": "análisis detallado"\n'
+                    "}"
+                )
+            },
             {"role": "user", "content": f"Spec:\n{spec_content}\n\nDiff implementado:\n{code_diff}"}
         ]
         resp = requests.post(url, json={"model": self.model, "messages": messages}, headers=headers, timeout=45)
         resp.raise_for_status()
         raw_text = resp.json()["choices"][0]["message"]["content"]
-        cleaned = raw_text.strip().strip("```json").strip("```").strip()
-        parsed = json.loads(cleaned)
+        cleaned = clean_json_text(raw_text)
+        parsed = json.loads(cleaned, strict=False)
         return LogicAuditOutput(**parsed)

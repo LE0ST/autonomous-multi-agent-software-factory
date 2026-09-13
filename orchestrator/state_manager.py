@@ -22,10 +22,11 @@ VALID_STATES = [
     "SAST_FILTER",
     "LOGIC_AUDIT",
     "AUTO_MERGE",
+    "HUMAN_REVIEW",
     "HALT_HUMAN"
 ]
 
-ExecutionStatus = Literal["RUNNING", "INTERRUPTED", "COMPLETED", "FAILED"]
+ExecutionStatus = Literal["RUNNING", "INTERRUPTED", "COMPLETED", "FAILED", "NEEDS_HUMAN_REVIEW"]
 
 class StateManager:
     def __init__(
@@ -185,3 +186,32 @@ class StateManager:
         if self.raise_on_halt:
             raise RuntimeError(f"Circuit Breaker activado: {reason}")
         sys.exit(1)
+
+    def request_human_review(self, reason: str, gate: str = "LOGIC_AUDIT"):
+        """Suspende el pipeline de forma controlada sin consumir replans del Worker."""
+        self.transition("HUMAN_REVIEW", f"Revisión humana / servicio no disponible en {gate}: {reason}")
+        self.set_execution_status("NEEDS_HUMAN_REVIEW")
+        self.data["blocked_reason"] = {
+            "gate": gate,
+            "reason": reason,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        self.save()
+
+        report_path = Path(f"HUMAN_REVIEW_{self.task_id}.md")
+        content = (
+            f"# REVISIÓN HUMANA REQUERIDA - {self.task_id}\n\n"
+            f"- **Fecha:** {datetime.now(timezone.utc).isoformat()}\n"
+            f"- **Compuerta:** {gate}\n"
+            f"- **Motivo:** {reason}\n"
+            f"- **Estado de la tarea:** Las compuertas previas (SPEC, DIFF, TESTS, SAST) fueron superadas exitosamente.\n"
+            f"- **Acción de Presupuesto:** NO se consumieron intentos del Worker ni replans de lógica/seguridad.\n"
+            f"- **Worktree:** El código generado en `.worktrees/wt_{self.task_id}` está preservado e intacto.\n\n"
+            f"El pipeline ha quedado pausado en un estado seguro (`NEEDS_HUMAN_REVIEW`).\n"
+        )
+        report_path.write_text(content, encoding="utf-8")
+        print(f"\n[HUMAN REVIEW] Pipeline pausado en estado controlado. Ver {report_path.name}")
+        
+        if self.raise_on_halt:
+            raise RuntimeError(f"Revisión humana requerida ({gate}): {reason}")
+        sys.exit(0)

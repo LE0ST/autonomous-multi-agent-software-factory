@@ -21,7 +21,7 @@ from scripts.test_runner import run_tests
 from scripts.sast_runner import run_sast, EXIT_NO_FINDINGS, EXIT_FINDINGS
 from scripts.merge_gate import execute_fast_forward_merge
 from scripts.worktree_manager import create_worktree, remove_worktree
-from adapters import GeminiAdapter, DeepSeekAdapter, GLMAdapter
+from adapters import GeminiAdapter, DeepSeekAdapter, GLMAdapter, NetworkTransportError
 
 def load_orchestrator_config(repo_root: Path) -> dict:
     cfg_file = repo_root / "orchestrator" / "config.json"
@@ -179,12 +179,42 @@ def run_pipeline(task_id: str, base_branch: str = "dev", simulate: bool = False)
         # LOGIC AUDIT
         sm.transition("LOGIC_AUDIT", "Ejecutando auditoría de invariantes de seguridad (GLM)...")
         diff_output = subprocess.check_output(["git", "diff", f"{base_branch}...HEAD"], cwd=wt_path, text=True)
-        audit_res = glm_client.audit_logic_and_security(spec_path.read_text(encoding="utf-8"), diff_output)
+        
+        try:
+            audit_res = glm_client.audit_logic_and_security(spec_path.read_text(encoding="utf-8"), diff_output)
+        except NetworkTransportError as e:
+            print(f"\n[!] Servicio de Auditoría de Seguridad no disponible: {e}")
+            sm.request_human_review(
+                reason=f"Logic Security LLM no disponible tras reintentos (HTTP {e.status_code or 'red'}). "
+                       f"Detalle: {e}",
+                gate="LOGIC_AUDIT"
+            )
+            return
+        except Exception as e:
+            print(f"\n[!] Error inesperado durante la auditoría de seguridad: {e}")
+            sm.halt_human(f"Fallo no recuperable en Logic Security Audit: {e}")
+            return
+
         if audit_res.status == "FAIL":
             print(f"[!] Auditoría de lógica falló. Invariantes violados: {audit_res.violated_invariants}")
             if not sm.consume_security_replan(f"Violación de invariantes: {audit_res.justification}"):
                 return
             continue
+
+        if audit_res.status in ("UNAVAILABLE", "UNCERTAIN"):
+            print(f"[!] Auditoría no concluyente ({audit_res.status}): {audit_res.justification}")
+            sm.request_human_review(
+                reason=f"Auditoría no concluyente ({audit_res.status}): {audit_res.justification}",
+                gate="LOGIC_AUDIT"
+            )
+            return
+
+        if audit_res.status == "SIMULATED":
+            if not simulate:
+                print(f"[!] ALERTA CRÍTICA: Se recibió auditoría simulada pero el pipeline está en modo real.")
+                sm.halt_human("Auditoría simulada recibida en ejecución real. Merge bloqueado.")
+                return
+            print(f"[i] Auditoría simulada (--simulate activo). Procediendo a prueba de compuertas.")
 
         # Todas las compuertas superadas
         pipeline_completed = True

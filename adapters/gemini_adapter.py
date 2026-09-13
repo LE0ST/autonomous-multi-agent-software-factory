@@ -10,6 +10,17 @@ from typing import Optional
 from .contracts import TriageOutput, SecurityFilterOutput
 from .network_retry import retry_with_backoff
 
+def clean_json_text(raw_text: str) -> str:
+    """Extrae JSON limpio eliminando de forma segura los bloques markdown."""
+    cleaned = raw_text.strip()
+    if cleaned.startswith("```json"):
+        cleaned = cleaned[7:].strip()
+    elif cleaned.startswith("```"):
+        cleaned = cleaned[3:].strip()
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3].strip()
+    return cleaned
+
 class GeminiAdapter:
     def __init__(self, model: str = "gemini-1.5-pro", api_key: Optional[str] = None):
         self.model = model
@@ -72,9 +83,8 @@ class GeminiAdapter:
         resp.raise_for_status()
         data = resp.json()
         raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
-        # Extraer JSON de la respuesta
-        cleaned = raw_text.strip().strip("```json").strip("```").strip()
-        parsed = json.loads(cleaned)
+        cleaned = clean_json_text(raw_text)
+        parsed = json.loads(cleaned, strict=False)
         return TriageOutput(**parsed)
 
     @retry_with_backoff(max_retries=3, initial_delay=1.0)
@@ -96,6 +106,6 @@ class GeminiAdapter:
         resp.raise_for_status()
         data = resp.json()
         raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
-        cleaned = raw_text.strip().strip("```json").strip("```").strip()
-        parsed = json.loads(cleaned)
+        cleaned = clean_json_text(raw_text)
+        parsed = json.loads(cleaned, strict=False)
         return SecurityFilterOutput(**parsed)
