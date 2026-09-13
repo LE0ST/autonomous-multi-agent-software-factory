@@ -4,6 +4,9 @@ adapters - Módulo de adaptadores para proveedores de modelos LLM con soporte de
 
 from .contracts import TriageOutput, SecurityFilterOutput, LogicAuditOutput
 from .network_retry import retry_with_backoff, NetworkTransportError
+from .gemini_adapter import GeminiAdapter
+from .deepseek_adapter import DeepSeekAdapter
+from .glm_adapter import GLMAdapter
 
 __all__ = [
     "TriageOutput",
@@ -11,4 +14,7 @@ __all__ = [
     "LogicAuditOutput",
     "retry_with_backoff",
     "NetworkTransportError",
+    "GeminiAdapter",
+    "DeepSeekAdapter",
+    "GLMAdapter"
 ]
