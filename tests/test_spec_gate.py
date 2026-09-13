@@ -99,3 +99,30 @@ def test_canonical_task_001_file():
     assert spec_file.exists()
     valid, msg = validate_spec(spec_file)
     assert valid is True, f"TASK-001.md falló la validación: {msg}"
+
+def test_permissive_format_table_and_spaces(tmp_path):
+    spec_content = """# TASK-104: Permissive Format
+
+### 1) Alcance y Fronteras
+* Archivos permitidos:
+  * `src/main.py`
+
+### 2) Criterios de Aceptacion
+* [ AC-01 ] Primer criterio con espacios.
+* [AC_02] Segundo criterio con guion bajo.
+
+### 3) Invariantes de Seguridad
+* [ SEC-01 ] Invariante con espacios.
+
+### 4) Matriz de Pruebas
+| Test ID | Descripcion | Cobertura |
+| :--- | :--- | :--- |
+| [ TEST-01 ] | Prueba principal | [AC-01], [SEC-01] |
+| [TEST-02] | Prueba secundaria | **[AC-02]** |
+"""
+    spec_file = tmp_path / "PERMISSIVE_SPEC.md"
+    spec_file.write_text(spec_content, encoding="utf-8")
+    
+    valid, msg = validate_spec(spec_file)
+    assert valid is True, f"Spec con formato permisivo falló: {msg}"
+    assert "ACs: 2, SECs: 1, TESTs: 2" in msg
