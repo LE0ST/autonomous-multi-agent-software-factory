@@ -56,11 +56,14 @@ def test_e2e_dry_run_success_flow():
         assert wt_path.exists()
         
         # 5. Worker builds code in worktree (allowed files according to TASK-001)
+        import time
+        t_stamp = time.time()
         sm.register_worker_run()
         src_dir = wt_path / "src" / "auth"
         src_dir.mkdir(parents=True, exist_ok=True)
         code_file = src_dir / "token_validator.py"
         code_file.write_text(
+            f"# Build {task_id} at {t_stamp}\n"
             "import hmac\nimport hashlib\n\ndef validate_token(token: str, secret: str = 'key') -> bool:\n"
             "    if not token or not isinstance(token, str):\n"
             "        return False\n"
