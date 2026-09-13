@@ -3,6 +3,12 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+
 # Git Worktrees
 .worktrees/
 
@@ -10,11 +16,25 @@ __pycache__/
 orchestrator/state/state_*.json
 orchestrator/payloads/*.json
 CRASH_REPORT_*.md
+HUMAN_REVIEW_*.md
 
 # Testing and Coverage
 .pytest_cache/
 .coverage
+.coverage.*
+coverage.xml
 htmlcov/
+
+# IDE & Editor Metadata
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Operating System Files
+.DS_Store
+Thumbs.db
 
 # API Keys and Secrets
 apis.txt
