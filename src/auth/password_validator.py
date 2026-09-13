@@ -1,52 +1,55 @@
-"""Password validation utilities.
+"""Secure password validator.
 
-This module exposes a single, side-effect free helper used to check the
-strength of a candidate password.
+This module provides :func:`validate_password`, a small, dependency-free
+helper that enforces minimal password strength requirements.
 
 Security notes
 --------------
-* The received password is **never** stored in a module attribute, cache or
-  global structure.
-* The received password is **never** written to a file, to a log, to the
-  standard output/error streams nor included in exception messages.
-* No credentials, secrets, tokens or keys are hard-coded in this module.
+* The password argument is treated as opaque: it is never written to disk,
+  never logged, and never included in exception messages or other output.
+* No credentials, secrets, tokens or keys are hardcoded in this module.
 """
 
 from __future__ import annotations
 
-__all__ = ["MIN_PASSWORD_LENGTH", "validate_password"]
-
-#: Minimal amount of characters accepted by the policy.
-MIN_PASSWORD_LENGTH: int = 8
+MIN_LENGTH = 8
 
 
 def validate_password(password: str) -> bool:
-    """Return ``True`` when ``password`` satisfies the minimum policy.
+    """Return ``True`` when *password* satisfies the minimum policy.
 
-    The policy requires that the candidate password:
+    The policy requires that the password:
 
     * is a non-empty string,
-    * contains at least :data:`MIN_PASSWORD_LENGTH` characters,
+    * has at least :data:`MIN_LENGTH` (8) characters,
     * contains at least one letter, and
     * contains at least one digit.
 
-    The function is intentionally pure and stateless: it keeps no reference to
-    the supplied value and only returns a boolean verdict. The password is
-    never logged, printed, persisted or embedded in any error message.
+    The function never echoes, stores or otherwise exposes the supplied
+    value; failures are reported solely through the boolean return value.
 
     Args:
-        password: Candidate password supplied by the caller.
+        password: The candidate password to validate.
 
     Returns:
-        ``True`` if the candidate complies with the policy, ``False`` otherwise.
+        ``True`` if the password meets the policy, ``False`` otherwise.
     """
-    if not isinstance(password, str):
+    if not isinstance(password, str) or not password:
         return False
 
-    if len(password) < MIN_PASSWORD_LENGTH:
+    if len(password) < MIN_LENGTH:
         return False
 
-    has_letter = any(character.isalpha() for character in password)
-    has_number = any(character.isdigit() for character in password)
+    has_letter = False
+    has_digit = False
 
-    return has_letter and has_number
+    for character in password:
+        if not has_letter and character.isalpha():
+            has_letter = True
+        elif not has_digit and character.isdigit():
+            has_digit = True
+
+        if has_letter and has_digit:
+            break
+
+    return has_letter and has_digit

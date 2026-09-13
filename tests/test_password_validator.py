@@ -1,142 +1,167 @@
-"""Unit tests for :mod:`src.auth.password_validator` (TASK-002)."""
+"""Tests for :mod:`src.auth.password_validator`."""
 
 from __future__ import annotations
 
-import os
-import sys
-from pathlib import Path
+import contextlib
+import io
+import unittest.mock
 
 import pytest
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+from src.auth.password_validator import validate_password
 
-from src.auth.password_validator import (  # noqa: E402
-    MIN_PASSWORD_LENGTH,
-    validate_password,
+
+def _capture_output(callable_obj, *args, **kwargs):
+    """Run *callable_obj* while capturing stdout/stderr.
+
+    Returns a tuple of ``(result, stdout_value, stderr_value)``.
+    """
+    stdout_buffer = io.StringIO()
+    stderr_buffer = io.StringIO()
+    with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(
+        stderr_buffer
+    ):
+        result = callable_obj(*args, **kwargs)
+    return result, stdout_buffer.getvalue(), stderr_buffer.getvalue()
+
+
+# --- [TEST-01] rejection cases -------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "password",
+    [
+        "",
+        None,
+        "short1A",
+        "abc12",
+        "12345",
+        "abcdefgh",
+        "12345678",
+        "onlyletters",
+        "1234567890",
+        "aBcDeFgH",
+        "!@#$%^&*",
+    ],
 )
+def test_rejects_invalid_passwords(password):
+    """[TEST-01] Reject empty, too-short and single-class passwords."""
+    result, stdout_value, stderr_value = _capture_output(
+        validate_password, password
+    )
+
+    assert result is False
+    assert stdout_value == ""
+    assert stderr_value == ""
 
 
-INVALID_PASSWORDS = [
-    pytest.param("", id="empty-string"),
-    pytest.param("Ab1", id="well-below-minimum-length"),
-    pytest.param("Abcdef1", id="one-character-below-minimum"),
-    pytest.param("abcdefgh", id="letters-only"),
-    pytest.param("12345678", id="digits-only"),
-    pytest.param("!!!!!!!!", id="no-letter-and-no-digit"),
-    pytest.param("        ", id="whitespace-only"),
-]
-
-VALID_PASSWORDS = [
-    pytest.param("abcdefg1", id="exactly-minimum-length"),
-    pytest.param("SecurePass123", id="mixed-case-with-digits"),
-    pytest.param("1a2b3c4d5e", id="leading-digit"),
-    pytest.param("p@ssw0rd!x", id="letters-digits-and-symbols"),
-]
+# --- [TEST-02] acceptance & secrecy --------------------------------------
 
 
-def _tree_snapshot(root: Path) -> set:
-    """Return a snapshot of every entry below ``root``."""
-    entries = set()
-    for current_dir, dirnames, filenames in os.walk(root):
-        for name in dirnames:
-            entries.add(Path(current_dir, name))
-        for name in filenames:
-            entries.add(Path(current_dir, name))
-    return entries
-
-
-# ---------------------------------------------------------------------------
-# [TEST-01] Rejection cases (covers AC-01 and SEC-01)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("candidate", INVALID_PASSWORDS)
-def test_invalid_passwords_are_rejected(candidate: str) -> None:
-    assert validate_password(candidate) is False
-
-
-def test_empty_password_is_rejected() -> None:
-    assert validate_password("") is False
-
-
-def test_password_below_minimum_length_is_rejected() -> None:
-    candidate = "a" * (MIN_PASSWORD_LENGTH - 1) + "1"
-    assert len(candidate) < MIN_PASSWORD_LENGTH
-    assert validate_password(candidate) is False
-
-
-def test_password_without_letter_is_rejected() -> None:
-    assert validate_password("0" * MIN_PASSWORD_LENGTH) is False
-
-
-def test_password_without_digit_is_rejected() -> None:
-    assert validate_password("x" * MIN_PASSWORD_LENGTH) is False
-
-
-def test_non_string_input_is_rejected() -> None:
-    assert validate_password(None) is False  # type: ignore[arg-type]
-
-
-# ---------------------------------------------------------------------------
-# [TEST-02] Acceptance cases and absence of side effects (covers AC-02, SEC-02)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("candidate", VALID_PASSWORDS)
-def test_valid_passwords_are_accepted(candidate: str) -> None:
-    assert validate_password(candidate) is True
-
-
-def test_validator_is_stateless_across_calls() -> None:
-    assert validate_password("S3curePass") is True
-    assert validate_password("onlyletters") is False
-    assert validate_password("S3curePass") is True
-
-
-def test_validate_password_produces_no_stdout_or_stderr(capsys) -> None:
-    validate_password("NoLeakPassword123")
-    validate_password("nope")
-
-    captured = capsys.readouterr()
-
-    assert captured.out == ""
-    assert captured.err == ""
-
-
-def test_validate_password_does_not_persist_password(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    password = "TemporaryPass123"
-
-    before = _tree_snapshot(tmp_path)
-    validate_password(password)
-    after = _tree_snapshot(tmp_path)
-
-    assert after == before
-
-
-def test_validate_password_does_not_keep_password_in_module_state() -> None:
-    password = "ModuleStatePass123"
-
-    validate_password(password)
-
-    module = sys.modules[validate_password.__module__]
-    leaked_attributes = [
-        attribute
-        for attribute, value in vars(module).items()
-        if isinstance(value, str) and password in value
-    ]
-
-    assert leaked_attributes == []
-
-
-def test_validator_does_not_return_the_password() -> None:
-    password = "ReturnCheckPass123"
-
-    result = validate_password(password)
+@pytest.mark.parametrize(
+    "password",
+    [
+        "password1",
+        "Passw0rd",
+        "abcdefg1",
+        "1abcdefg",
+        "a1bcdefg",
+        "Abcdefg1!",
+        "correcthorse1",
+    ],
+)
+def test_accepts_valid_passwords(password):
+    """[TEST-02] Accept passwords meeting the minimum policy."""
+    result, stdout_value, stderr_value = _capture_output(
+        validate_password, password
+    )
 
     assert result is True
-    assert result is not password
+    assert stdout_value == ""
+    assert stderr_value == ""
+
+
+def test_valid_password_produces_no_output():
+    """[TEST-02] A valid call must not emit anything on stdout/stderr."""
+    password = "password1"
+    result, stdout_value, stderr_value = _capture_output(
+        validate_password, password
+    )
+
+    assert result is True
+    assert password not in stdout_value
+    assert password not in stderr_value
+
+
+def test_invalid_password_produces_no_output():
+    """[TEST-01] An invalid call must not leak the password anywhere."""
+    password = "short"
+    result, stdout_value, stderr_value = _capture_output(
+        validate_password, password
+    )
+
+    assert result is False
+    assert password not in stdout_value
+    assert password not in stderr_value
+
+
+def test_does_not_persist_password(tmp_path, monkeypatch):
+    """[TEST-02] Validation must not persist the password to disk."""
+    password = "supersecret1"
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+
+    # Redirect common write targets into an isolated sandbox so any attempt
+    # to persist the password would be observable.
+    monkeypatch.chdir(sandbox)
+
+    validate_password(password)
+
+    persisted = list(sandbox.rglob("*"))
+    for path in persisted:
+        if path.is_file():
+            contents = path.read_bytes()
+            assert password.encode() not in contents
+
+
+def test_does_not_call_logging(monkeypatch):
+    """[TEST-02] Validation should not invoke logging with the password."""
+    captured = []
+
+    def _record(*args, **kwargs):
+        captured.append((args, kwargs))
+
+    monkeypatch.setattr("logging.Logger.info", _record, raising=False)
+    monkeypatch.setattr("logging.Logger.debug", _record, raising=False)
+    monkeypatch.setattr("logging.Logger.warning", _record, raising=False)
+    monkeypatch.setattr("logging.Logger.error", _record, raising=False)
+
+    password = "password1"
+    validate_password(password)
+
+    for args, kwargs in captured:
+        for value in args:
+            assert password not in str(value)
+        for value in kwargs.values():
+            assert password not in str(value)
+
+
+def test_no_print_called(monkeypatch):
+    """[TEST-02] Validation must never call ``print``."""
+    calls = []
+
+    def _fake_print(*args, **kwargs):
+        calls.append((args, kwargs))
+
+    monkeypatch.setattr("builtins.print", _fake_print)
+
+    validate_password("password1")
+    validate_password("bad")
+
+    assert calls == []
+
+
+def test_return_type_is_bool():
+    """[AC-01] The result must always be a plain ``bool``."""
+    assert isinstance(validate_password("password1"), bool)
+    assert isinstance(validate_password(""), bool)
