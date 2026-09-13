@@ -16,21 +16,26 @@ def validate_spec(spec_path: str | Path) -> tuple[bool, str]:
     
     content = path.read_text(encoding="utf-8")
     
-    # 1. Validar presencia de secciones requeridas
+    # 1. Validar presencia de secciones requeridas con flexibilidad (#, ##, ###, puntos, paréntesis, acentos)
     required_sections = [
-        (r"##\s+1\.\s+Alcance y Fronteras", "1. Alcance y Fronteras"),
-        (r"##\s+2\.\s+Criterios de Aceptación", "2. Criterios de Aceptación"),
-        (r"##\s+3\.\s+Invariantes de Seguridad", "3. Invariantes de Seguridad"),
-        (r"##\s+4\.\s+Matriz de Pruebas Requeridas", "4. Matriz de Pruebas Requeridas")
+        (r"#+\s*1[\.\):\-]?\s*Alcance\s+y\s+Fronteras", "1. Alcance y Fronteras"),
+        (r"#+\s*2[\.\):\-]?\s*Criterios\s+de\s+Aceptaci[oó]n", "2. Criterios de Aceptación"),
+        (r"#+\s*3[\.\):\-]?\s*Invariantes\s+de\s+Seguridad", "3. Invariantes de Seguridad"),
+        (r"#+\s*4[\.\):\-]?\s*Matriz\s+de\s+Pruebas(?:\s+Requeridas)?", "4. Matriz de Pruebas Requeridas")
     ]
     for pattern, name in required_sections:
         if not re.search(pattern, content, re.IGNORECASE):
             return False, f"Sección obligatoria faltante: '{name}'"
 
-    # 2. Extraer identificadores
-    acs = set(re.findall(r"\[AC-\d+\]", content))
-    secs = set(re.findall(r"\[SEC-\d+\]", content))
-    tests = set(re.findall(r"\[TEST-\d+\]", content))
+    # 2. Extraer identificadores con flexibilidad en espacios y formato de número
+    raw_acs = re.findall(r"\[\s*AC[_-]?(\d+)\s*\]", content, re.IGNORECASE)
+    raw_secs = re.findall(r"\[\s*SEC[_-]?(\d+)\s*\]", content, re.IGNORECASE)
+    raw_tests = re.findall(r"\[\s*TEST[_-]?(\d+)\s*\]", content, re.IGNORECASE)
+
+    # Normalizar canónicamente a AC-01, SEC-01, TEST-01
+    acs = {f"AC-{int(n):02d}" for n in raw_acs}
+    secs = {f"SEC-{int(n):02d}" for n in raw_secs}
+    tests = {f"TEST-{int(n):02d}" for n in raw_tests}
 
     if not acs:
         return False, "Debe existir al menos un criterio de aceptación [AC-xx]."
@@ -39,20 +44,36 @@ def validate_spec(spec_path: str | Path) -> tuple[bool, str]:
     if not tests:
         return False, "Debe existir al menos una prueba requerida [TEST-xx]."
 
-    # 3. Validar trazabilidad en la matriz de pruebas (Sección 4)
-    matrix_split = re.split(r"##\s+4\.\s+Matriz de Pruebas Requeridas", content, flags=re.IGNORECASE)
+    # 3. Aislar la sección 4 (Matriz de Pruebas)
+    matrix_split = re.split(r"#+\s*4[\.\):\-]?\s*Matriz\s+de\s+Pruebas", content, flags=re.IGNORECASE)
     if len(matrix_split) < 2:
         return False, "No se pudo aislar el contenido de la Matriz de Pruebas Requeridas."
         
     matrix_section = matrix_split[-1]
     
-    missing_ac = [ac for ac in sorted(acs) if ac not in matrix_section]
+    # 4. Validar trazabilidad en la matriz (soporta tablas, listas con -, *, o texto libre)
+    missing_ac = []
+    for ac in sorted(acs):
+        num = int(ac.split("-")[1])
+        # Busca variantes: [AC-01], [AC-1], [ AC-01 ], **[AC-01]**, AC-01, AC-1
+        pattern = rf"(?:\[\s*|\b)AC[_-]?0*{num}(?:\s*\]|\b)"
+        if not re.search(pattern, matrix_section, re.IGNORECASE):
+            missing_ac.append(ac)
+            
     if missing_ac:
-        return False, f"Los siguientes Criterios de Aceptación no tienen prueba asociada en la Matriz: {', '.join(missing_ac)}"
+        missing_ac_str = ", ".join(f"[{ac}]" for ac in missing_ac)
+        return False, f"Los siguientes Criterios de Aceptación no tienen prueba asociada en la Matriz: {missing_ac_str}"
 
-    missing_sec = [sec for sec in sorted(secs) if sec not in matrix_section]
+    missing_sec = []
+    for sec in sorted(secs):
+        num = int(sec.split("-")[1])
+        pattern = rf"(?:\[\s*|\b)SEC[_-]?0*{num}(?:\s*\]|\b)"
+        if not re.search(pattern, matrix_section, re.IGNORECASE):
+            missing_sec.append(sec)
+            
     if missing_sec:
-        return False, f"Los siguientes Invariantes de Seguridad no tienen prueba asociada en la Matriz: {', '.join(missing_sec)}"
+        missing_sec_str = ", ".join(f"[{sec}]" for sec in missing_sec)
+        return False, f"Los siguientes Invariantes de Seguridad no tienen prueba asociada en la Matriz: {missing_sec_str}"
 
     return True, f"Spec validada exitosamente. ACs: {len(acs)}, SECs: {len(secs)}, TESTs: {len(tests)}"
 

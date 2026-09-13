@@ -23,14 +23,17 @@ def cleanup_task(repo_root: Path, task_id: str, reset_commit: str = None):
         except Exception:
             pass
     if reset_commit:
-        subprocess.run(["git", "checkout", "dev"], cwd=repo_root, capture_output=True)
-        subprocess.run(["git", "reset", "--hard", reset_commit], cwd=repo_root, capture_output=True)
+        # Solo resetear si la rama actual se movió debido al merge del test
+        curr_head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo_root, text=True).strip()
+        if curr_head != reset_commit:
+            subprocess.run(["git", "checkout", "dev"], cwd=repo_root, capture_output=True)
+            subprocess.run(["git", "reset", "--hard", reset_commit], cwd=repo_root, capture_output=True)
 
 def test_e2e_dry_run_success_flow():
     task_id = "TASK-E2E-SUCCESS"
     repo_root = Path.cwd()
     initial_head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo_root, text=True).strip()
-    cleanup_task(repo_root, task_id, reset_commit=initial_head)
+    cleanup_task(repo_root, task_id)
     
     try:
         spec_path = repo_root / "specs" / "TASK-001.md"
