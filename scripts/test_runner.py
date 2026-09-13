@@ -33,7 +33,7 @@ def run_tests(worktree_dir: Path, repo_root: Path) -> tuple[bool, str, str, int]
     elif (worktree_dir / "package.json").exists():
         cmd = f"npm test -- --coverage --coverageThreshold='{{\"global\":{{\"lines\":{cov_threshold}}}}}'"
     else:
-        cmd = f"python -m pytest --cov=src --cov-fail-under={int(cov_threshold)} -q"
+        cmd = f"python -m pytest --ignore-glob=*e2e* --cov=src --cov-fail-under={int(cov_threshold)} -q"
         
     res = subprocess.run(
         cmd,

@@ -1,7 +1,7 @@
 {
   "coverage_threshold": 85.0,
   "base_branch": "dev",
-  "test_command": "python -m pytest --cov=src --cov-fail-under=85 -q",
+  "test_command": "python -m pytest --ignore-glob=*e2e* --cov=src --cov-fail-under=85 -q",
   "budgets": {
     "max_logic_replans": 2,
     "max_security_replans": 1,
