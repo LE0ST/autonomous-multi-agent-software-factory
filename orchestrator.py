@@ -271,7 +271,7 @@ def resume_merge(task_id: str, base_branch: str = "dev", repo_root: Path | None 
         capture_output=True,
         text=True
     )
-    branch_names = [b.strip().lstrip("* ") for b in branch_check.stdout.splitlines()]
+    branch_names = [b.strip().lstrip("*+ ") for b in branch_check.stdout.splitlines()]
     if task_branch not in branch_names:
         print(f"[!] MERGE RECOVERY DENIED: Branch '{task_branch}' does not exist.")
         return False
@@ -299,16 +299,164 @@ def resume_merge(task_id: str, base_branch: str = "dev", repo_root: Path | None 
     print(f"       Branch '{task_branch}' Fast-Forward merged into '{base_branch}'.")
     return True
 
+def resume_audit(
+    task_id: str,
+    base_branch: str = "dev",
+    simulate: bool = False,
+    repo_root: Path | None = None,
+    raise_on_halt: bool = False
+) -> bool:
+    """
+    Deterministic audit recovery pathway.
+    Reuses existing code in worktree without running Worker, Architect, Triage,
+    or earlier gates (SPEC, DIFF, TESTING, SAST). Does not consume worker budgets.
+    Executes exclusively the pending LOGIC_AUDIT and proceeds to AUTO_MERGE if clean.
+    """
+    root = repo_root or Path.cwd()
+    load_api_keys(root)
+    config_file = root / "orchestrator" / "config.json"
+    state_dir = root / "orchestrator" / "state"
+
+    # 1. Load StateManager
+    sm = StateManager(
+        task_id,
+        config_path=str(config_file),
+        state_dir=str(state_dir),
+        raise_on_halt=raise_on_halt
+    )
+
+    # 2. Validate recovery authorization (read-only checks on FSM, git branch, worktree, repo cleanliness, ancestor check)
+    can_resume, reason = sm.can_resume_audit(repo_root=root, base_branch=base_branch)
+    if not can_resume:
+        print(f"[!] AUDIT RECOVERY DENIED for {task_id}: {reason}")
+        return False
+
+    spec_path = root / "specs" / f"{task_id}.md"
+    if not spec_path.exists():
+        print(f"[!] AUDIT RECOVERY DENIED for {task_id}: Specification '{spec_path}' does not exist.")
+        return False
+
+    wt_path = root / ".worktrees" / f"wt_{task_id}"
+
+    # 3. Transition FSM: HUMAN_REVIEW -> LOGIC_AUDIT
+    config = load_orchestrator_config(root)
+    sec_role = config.get("roles", {}).get("logic_security", {})
+    sec_provider = sec_role.get("provider", "glm")
+    sec_model = sec_role.get("model", "glm-5.3")
+
+    sm.transition("LOGIC_AUDIT", f"Resuming security invariant audit ({sec_provider.upper()})...")
+
+    # 4. Initialize Security Client
+    if sec_provider == "gemini":
+        sec_client = GeminiAdapter(model=sec_model)
+    else:
+        sec_client = GLMAdapter(model=sec_model)
+
+    if simulate:
+        sec_client.is_simulation = True
+
+    # 5. Extract diff from preserved worktree
+    try:
+        diff_output = subprocess.check_output(
+            ["git", "diff", f"{base_branch}...HEAD"],
+            cwd=wt_path,
+            text=True
+        )
+    except Exception as e:
+        clean_err = sanitize_secret_text(e)
+        print(f"[!] Error calculating diff in worktree: {clean_err}")
+        sm.halt_human(f"Diff calculation failed in worktree: {clean_err}", exit_process=False)
+        return False
+
+    # 6. Run exclusive Logic Security LLM Audit
+    try:
+        audit_res = sec_client.audit_logic_and_security(
+            spec_path.read_text(encoding="utf-8"),
+            diff_output
+        )
+    except NetworkTransportError as e:
+        clean_err = sanitize_secret_text(e)
+        print(f"\n[!] Security Audit service unavailable: {clean_err}")
+        sm.request_human_review(
+            reason=f"Logic Security LLM unavailable after retries (HTTP {e.status_code or 'network'}). "
+                   f"Detail: {clean_err}",
+            gate="LOGIC_AUDIT",
+            exit_process=False
+        )
+        return False
+    except Exception as e:
+        clean_err = sanitize_secret_text(e)
+        print(f"\n[!] Unexpected error during security audit: {clean_err}")
+        sm.halt_human(f"Unrecoverable failure in Logic Security Audit: {clean_err}", exit_process=False)
+        return False
+
+    # 7. Evaluate audit verdict using existing pipeline behavior
+    if audit_res.status == "FAIL":
+        print(f"[!] Logic audit failed. Violated invariants: {audit_res.violated_invariants}")
+        if not sm.consume_security_replan(f"Invariant violation: {audit_res.justification}"):
+            return False
+        return False
+
+    if audit_res.status in ("UNAVAILABLE", "UNCERTAIN"):
+        print(f"[!] Inconclusive audit ({audit_res.status}): {audit_res.justification}")
+        sm.request_human_review(
+            reason=f"Inconclusive audit ({audit_res.status}): {audit_res.justification}",
+            gate="LOGIC_AUDIT",
+            exit_process=False
+        )
+        return False
+
+    if audit_res.status == "SIMULATED":
+        if not simulate:
+            print(f"[!] CRITICAL ALERT: Received simulated audit but pipeline is in live mode.")
+            sm.halt_human("Simulated audit received in live run. Merge blocked.", exit_process=False)
+            return False
+        print(f"[i] Simulated audit (--simulate active). Proceeding to gate check.")
+
+    # 8. Proceed to AUTO_MERGE using existing protections (no automatic rebase)
+    # TOCTOU protection: verify Fast-Forward ancestor condition BEFORE removing worktree
+    ancestor_check = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", base_branch, f"task/{task_id}"],
+        cwd=root,
+        capture_output=True,
+        text=True
+    )
+    if ancestor_check.returncode != 0:
+        msg = (
+            f"TREE DIVERGENCE DETECTED: The branch '{base_branch}' received commits "
+            f"after audit started. Worktree preserved. Manual reconciliation required."
+        )
+        print(f"[!] {msg}")
+        sm.halt_human(f"Fast-Forward merge blocked: {msg}", exit_process=False)
+        return False
+
+    sm.transition("AUTO_MERGE", "Audit passed. Detaching worktree and merging into dev...")
+    remove_worktree(root, task_id)
+    merge_passed, merge_msg = execute_fast_forward_merge(root, task_id, base_branch)
+    if not merge_passed:
+        sm.halt_human(f"Fast-Forward merge failed: {merge_msg}", exit_process=False)
+        return False
+
+    sm.set_execution_status("COMPLETED")
+    print(f"\n[PASS] AUDIT RECOVERY COMPLETED SUCCESSFULLY FOR {task_id}!")
+    print(f"       Branch 'task/{task_id}' Fast-Forward merged into '{base_branch}'.")
+    return True
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Autonomous Multi-Agent Software Factory Orchestrator")
     parser.add_argument("task_id", help="Task identifier (e.g. TASK-001)")
     parser.add_argument("--base", default="dev", help="Base integration branch (default: dev)")
     parser.add_argument("--simulate", action="store_true", help="Simulation / dry-run mode without consuming API tokens")
     parser.add_argument("--resume-merge", action="store_true", help="Deterministically recover merge for an authorized task")
+    parser.add_argument("--resume-audit", action="store_true", help="Deterministically recover pending logic audit for an authorized task in HUMAN_REVIEW")
     args = parser.parse_args()
 
     if args.resume_merge:
         success = resume_merge(args.task_id, args.base)
+        sys.exit(0 if success else 1)
+
+    if args.resume_audit:
+        success = resume_audit(args.task_id, args.base, args.simulate)
         sys.exit(0 if success else 1)
 
     run_pipeline(args.task_id, args.base, args.simulate)

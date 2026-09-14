@@ -6,6 +6,7 @@ Manages epochs, formal states, independent budgets, and failure recovery.
 
 import json
 import sys
+import subprocess
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Literal
@@ -174,7 +175,7 @@ class StateManager:
         self.data["budgets"]["worker_attempts_in_epoch"] = 0
         self.save()
 
-    def halt_human(self, reason: str):
+    def halt_human(self, reason: str, exit_process: bool = True):
         safe_reason = sanitize_secret_text(reason)
         self.transition("HALT_HUMAN", safe_reason)
         self.set_execution_status("FAILED")
@@ -196,9 +197,10 @@ class StateManager:
         
         if self.raise_on_halt:
             raise RuntimeError(f"Circuit Breaker triggered: {safe_reason}")
-        sys.exit(1)
+        if exit_process:
+            sys.exit(1)
 
-    def request_human_review(self, reason: str, gate: str = "LOGIC_AUDIT"):
+    def request_human_review(self, reason: str, gate: str = "LOGIC_AUDIT", exit_process: bool = True):
         """Suspends the pipeline in a controlled manner without consuming Worker replans."""
         safe_reason = sanitize_secret_text(reason)
         self.transition("HUMAN_REVIEW", f"Human review / service unavailable at {gate}: {safe_reason}")
@@ -226,7 +228,8 @@ class StateManager:
         
         if self.raise_on_halt:
             raise RuntimeError(f"Human review required ({gate}): {safe_reason}")
-        sys.exit(0)
+        if exit_process:
+            sys.exit(0)
 
     def can_resume_merge(self) -> tuple[bool, str]:
         """
@@ -263,3 +266,96 @@ class StateManager:
             return False, f"Failure cause does not correspond to a merge failure: '{details}'"
 
         return True, "Task authorized for merge recovery."
+
+    def can_resume_audit(self, repo_root: Path | str | None = None, base_branch: str = "dev") -> tuple[bool, str]:
+        """
+        Validates in read-only mode if the task is authorized for audit recovery.
+        Required conditions:
+          - current_state == 'HUMAN_REVIEW'
+          - execution_status == 'NEEDS_HUMAN_REVIEW'
+          - blocked_reason.gate == 'LOGIC_AUDIT'
+          - History contains a transition from 'LOGIC_AUDIT' to 'HUMAN_REVIEW'
+          - Branch task/<task_id> exists (if repo_root is provided)
+          - Worktree .worktrees/wt_<task_id> exists and is clean (if repo_root is provided)
+          - Main repository is clean (if repo_root is provided)
+          - Base branch is an ancestor of task branch (Fast-Forward integration possible)
+        """
+        curr_state = self.data.get("current_state")
+        if curr_state != "HUMAN_REVIEW":
+            return False, f"current_state must be 'HUMAN_REVIEW', actual: '{curr_state}'"
+
+        exec_status = self.data.get("execution_status")
+        if exec_status != "NEEDS_HUMAN_REVIEW":
+            return False, f"execution_status must be 'NEEDS_HUMAN_REVIEW', actual: '{exec_status}'"
+
+        blocked_gate = self.data.get("blocked_reason", {}).get("gate")
+        if blocked_gate != "LOGIC_AUDIT":
+            return False, f"blocked_reason.gate must be 'LOGIC_AUDIT', actual: '{blocked_gate}'"
+
+        history = self.data.get("history", [])
+        if not history:
+            return False, "Transition history is empty."
+
+        has_audit_transition = any(
+            t.get("from") == "LOGIC_AUDIT" and t.get("to") == "HUMAN_REVIEW"
+            for t in history
+        )
+        if not has_audit_transition:
+            return False, "History does not contain a 'LOGIC_AUDIT -> HUMAN_REVIEW' transition."
+
+        if repo_root is not None:
+            root = Path(repo_root)
+            task_branch = f"task/{self.task_id}"
+
+            # 1. Branch existence check
+            branch_check = subprocess.run(
+                ["git", "branch", "--list", task_branch],
+                cwd=root,
+                capture_output=True,
+                text=True
+            )
+            branches = [b.strip().lstrip("*+ ") for b in branch_check.stdout.splitlines()]
+            if task_branch not in branches:
+                return False, f"Branch '{task_branch}' does not exist."
+
+            # 2. Worktree existence check
+            wt_path = root / ".worktrees" / f"wt_{self.task_id}"
+            if not wt_path.exists() or not wt_path.is_dir():
+                return False, f"Worktree directory '{wt_path}' does not exist."
+
+            # 3. Worktree cleanliness check
+            wt_status = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=wt_path,
+                capture_output=True,
+                text=True
+            )
+            if wt_status.returncode != 0 or wt_status.stdout.strip():
+                return False, f"Worktree '{wt_path}' has uncommitted modifications:\n{wt_status.stdout.strip()}"
+
+            # 4. Main repository cleanliness check
+            root_status = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=root,
+                capture_output=True,
+                text=True
+            )
+            if root_status.returncode != 0 or root_status.stdout.strip():
+                return False, f"Main repository has uncommitted modifications:\n{root_status.stdout.strip()}"
+
+            # 5. Fast-Forward ancestor pre-check (avoids token waste and preserves worktree if diverged)
+            ancestor_check = subprocess.run(
+                ["git", "merge-base", "--is-ancestor", base_branch, task_branch],
+                cwd=root,
+                capture_output=True,
+                text=True
+            )
+            if ancestor_check.returncode != 0:
+                return False, (
+                    f"TREE DIVERGENCE DETECTED: The base branch '{base_branch}' is not an ancestor of '{task_branch}'. "
+                    f"Fast-Forward merge will not be possible without reconciliation. "
+                    f"Worktree preserved; audit call aborted to avoid unnecessary cost. "
+                    f"Reconcile manually (e.g. rebase) before resuming audit."
+                )
+
+        return True, "Task authorized for audit recovery."
