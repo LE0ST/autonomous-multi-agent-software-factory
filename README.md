@@ -95,8 +95,8 @@ flowchart TD
    Validates required sections, unambiguous Acceptance Criteria (`[AC-xx]`), Security Invariants (`[SEC-xx]`), and 1:1 traceability in the Test Matrix before any code is written.
 2. **`DIFF_GATE` ([`scripts/diff_gate.py`](scripts/diff_gate.py)):**
    Inspects `git diff base...HEAD` inside the worktree. Strictly enforces:
-   $$\text{modified\_files} \subseteq \text{allowed\_files}$$
-   $$\text{forbidden\_files} \cap \text{modified\_files} = \emptyset$$
+   - `modified_files ⊆ allowed_files`
+   - `forbidden_files ∩ modified_files = ∅`
    Blocks edits to root infrastructure files (`pyproject.toml`, `.env*`, `RULES.md`, `orchestrator/`, `scripts/`).
 3. **`TEST_RUNNER` ([`scripts/test_runner.py`](scripts/test_runner.py)):**
    Executes `pytest` with coverage measurement. Demands $\ge 85\%$ line coverage on task files. Fails if assertions fail or coverage is deficient.
