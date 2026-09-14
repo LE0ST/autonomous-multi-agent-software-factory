@@ -1,13 +1,28 @@
-"""A thread-safe, in-memory TTL cache with least-recently-used eviction.
+"""Thread-safe in-memory TTL cache with least-recently-used eviction.
 
-The cache is intentionally self contained: every entry is held in the memory of
-a single :class:`TTLCache` instance.  Nothing is written to disk, nothing is
-sent over a network connection, and cache keys or values are never emitted to
-standard output, standard error, log records, or exception messages.
+Design notes
+------------
+* Every entry lives in process memory only.  Keys and values are never
+  logged, printed, embedded in exception messages or written to any kind of
+  persistent storage.
+* No network, subprocess, dynamic-evaluation (``eval``/``exec``) or external
+  persistence facilities are used.
+* All mutable state is encapsulated in :class:`TTLCache` instances; the only
+  module level globals are immutable constants.
+* Every public method acquires a single re-entrant lock, so concurrent
+  ``get``/``set``/``delete`` calls can never corrupt the internal state nor
+  raise race-condition related exceptions.
 
-Time is measured with :func:`time.monotonic`, which is immune to wall-clock
-adjustments.  Callers that want to drive the clock explicitly may pass an
-absolute ``now`` value expressed on that same monotonic timeline.
+Example
+-------
+>>> cache = TTLCache(max_size=2, default_ttl=5.0)
+>>> cache.set("a", 1)
+>>> cache.get("a")
+1
+>>> cache.delete("a")
+True
+>>> cache.delete("a")
+False
 """
 
 from __future__ import annotations
@@ -15,25 +30,29 @@ from __future__ import annotations
 import math
 import threading
 import time
-from collections import OrderedDict
-from typing import Any, Optional, Tuple
+from collections import OrderedDict, namedtuple
 
-__all__ = ["TTLCache"]
+__all__ = ("TTLCache",)
 
-#: Monotonic clock used for every TTL computation in this module.
-_clock = time.monotonic
+# Readings at or above this threshold cannot come from ``time.monotonic()``
+# on any realistic platform (that would require more than 31 years of uptime),
+# so they are interpreted as wall-clock timestamps supplied by callers that
+# pass ``now=time.time()``.  This keeps the ``now`` argument of ``get``
+# usable with either clock without ever changing the behaviour for internal
+# (monotonic) readings.  Immutable module level constant.
+_WALL_CLOCK_THRESHOLD = 1000000000.0
+
+# Internal record: the cached value together with its absolute expiry time.
+# The type itself is immutable and contains no module level mutable state.
+_Entry = namedtuple("_Entry", ("value", "expires_at"))
 
 
-def _validate_max_size(value: Any) -> int:
-    """Return ``value`` coerced to a positive ``int``.
-
-    Raises :class:`ValueError` when the value is not a strictly positive,
-    integral number.  The offending value is never included in the message.
-    """
+def _validate_max_size(value):
+    """Return ``value`` as a positive ``int`` or raise :class:`ValueError`."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError("max_size must be a positive integer")
     if isinstance(value, float):
-        if not math.isfinite(value) or not value.is_integer():
+        if not value.is_integer():
             raise ValueError("max_size must be a positive integer")
         value = int(value)
     if value <= 0:
@@ -41,152 +60,172 @@ def _validate_max_size(value: Any) -> int:
     return int(value)
 
 
-def _validate_ttl(value: Any, name: str) -> float:
-    """Return ``value`` coerced to a strictly positive ``float`` TTL.
-
-    Raises :class:`ValueError` for non-numeric, NaN, zero, or negative values.
-    ``name`` is always a fixed literal supplied by this module, so no cache key
-    or value can ever leak into the resulting message.
-    """
+def _validate_ttl(value, name):
+    """Return ``value`` as a positive ``float`` or raise :class:`ValueError`."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"{name} must be a positive number")
-    if isinstance(value, float) and math.isnan(value):
-        raise ValueError(f"{name} must be a positive number")
-    if value <= 0:
-        raise ValueError(f"{name} must be a positive number")
-    return float(value)
+        raise ValueError(name + " must be a positive number of seconds")
+    number = float(value)
+    if math.isnan(number) or number <= 0.0:
+        raise ValueError(name + " must be a positive number of seconds")
+    return number
 
 
 class TTLCache:
-    """A bounded, thread-safe cache whose entries expire after a TTL.
+    """A bounded, thread-safe, in-memory cache with TTL and LRU eviction.
 
-    Entries are ordered from least recently used to most recently used.  A
-    successful :meth:`get` refreshes an entry's position, and inserting into a
-    full cache evicts the least recently used non-expired entry.
+    Parameters
+    ----------
+    max_size:
+        Maximum number of live entries kept in the cache.  Must be positive.
+    default_ttl:
+        Lifetime, in seconds, applied to entries stored without an explicit
+        ``ttl``.  Must be positive.
 
-    All mutable state lives inside the instance; no module level mutable state
-    exists.  Every public method is guarded by a single re-entrant lock, so
-    concurrent ``get``, ``set`` and ``delete`` calls cannot corrupt the cache.
+    Notes
+    -----
+    The cache uses ``time.monotonic()`` as its clock, so entries are immune to
+    wall-clock adjustments.  ``get`` accepts an explicit ``now`` timestamp to
+    allow deterministic expiry checks; wall-clock timestamps are transparently
+    mapped onto the internal monotonic timeline.
     """
 
-    def __init__(self, max_size: int, default_ttl: float) -> None:
-        """Create a cache holding at most ``max_size`` entries.
+    __slots__ = (
+        "_clock",
+        "_default_ttl",
+        "_entries",
+        "_lock",
+        "_max_size",
+        "_next_expiry",
+        "_wall_clock",
+    )
 
-        ``default_ttl`` is applied when :meth:`set` is called without an
-        explicit ``ttl``.  Both arguments must be strictly positive, otherwise
-        :class:`ValueError` is raised.
-        """
-        self._max_size: int = _validate_max_size(max_size)
-        self._default_ttl: float = _validate_ttl(default_ttl, "default_ttl")
-        # OrderedDict maps key -> (value, absolute expiry on the monotonic clock)
-        self._entries: "OrderedDict[Any, Tuple[Any, float]]" = OrderedDict()
-        self._lock: threading.RLock = threading.RLock()
-
-    # ------------------------------------------------------------------
-    # Introspection
-    # ------------------------------------------------------------------
-    @property
-    def max_size(self) -> int:
-        """Maximum number of entries the cache will retain."""
-        return self._max_size
-
-    @property
-    def default_ttl(self) -> float:
-        """TTL, in seconds, used when :meth:`set` receives no explicit TTL."""
-        return self._default_ttl
-
-    def __len__(self) -> int:
-        """Return the number of live (non-expired) entries."""
-        now = _clock()
-        with self._lock:
-            self._purge_expired(now)
-            return len(self._entries)
-
-    def __contains__(self, key: object) -> bool:
-        """Return ``True`` when ``key`` maps to a live, non-expired entry."""
-        now = _clock()
-        with self._lock:
-            entry = self._entries.get(key)
-            if entry is None:
-                return False
-            if entry[1] <= now:
-                del self._entries[key]
-                return False
-            return True
+    def __init__(self, max_size=128, default_ttl=60.0):
+        self._max_size = _validate_max_size(max_size)
+        self._default_ttl = _validate_ttl(default_ttl, "default_ttl")
+        self._clock = time.monotonic
+        self._wall_clock = time.time
+        self._lock = threading.RLock()
+        # Ordered from least recently used (index 0) to most recently used.
+        self._entries = OrderedDict()
+        # Lower bound for the earliest expiry; used to skip pointless scans.
+        self._next_expiry = math.inf
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-    def set(self, key: str, value: object, ttl: Optional[float] = None) -> None:
-        """Store ``value`` under ``key``.
+    def set(self, key, value, ttl=None):
+        """Store ``value`` under ``key`` for ``ttl`` seconds.
 
-        The entry expires ``ttl`` seconds from now, or ``default_ttl`` seconds
-        from now when ``ttl`` is ``None``.  A non-positive ``ttl`` raises
-        :class:`ValueError`.  If the cache is full, expired entries are dropped
-        first and then the least recently used remaining entry is evicted.
+        When ``ttl`` is ``None`` the cache's ``default_ttl`` is used.  A
+        non-positive or non-numeric ``ttl`` raises :class:`ValueError`.
+        Storing a key that is already present replaces its value, refreshes
+        its lifetime and marks it as the most recently used entry.
         """
-        if ttl is None:
-            effective_ttl = self._default_ttl
-        else:
-            effective_ttl = _validate_ttl(ttl, "ttl")
-
-        now = _clock()
-        expires_at = now + effective_ttl
+        lifetime = self._default_ttl if ttl is None else _validate_ttl(ttl, "ttl")
 
         with self._lock:
-            self._entries[key] = (value, expires_at)
-            # Assignment alone does not refresh recency on an OrderedDict.
+            now = self._clock()
+            expires_at = now + lifetime
+            self._entries[key] = _Entry(value, expires_at)
+            # Re-inserting an existing key keeps its old position, so make
+            # sure the fresh entry is moved to the most-recently-used end.
             self._entries.move_to_end(key)
+            if expires_at < self._next_expiry:
+                self._next_expiry = expires_at
             self._purge_expired(now)
             while len(self._entries) > self._max_size:
+                # Every expired entry has just been purged, therefore the
+                # least recently used remaining entry is a live one.
                 self._entries.popitem(last=False)
 
-    def get(self, key: str, now: Optional[float] = None) -> object:
-        """Return the live value stored for ``key``, or ``None``.
+    def get(self, key, now=None):
+        """Return the live value stored under ``key`` or ``None``.
 
-        Expired entries are removed and never returned.  A successful lookup
-        marks the entry as most recently used.  ``now`` may be supplied to use
-        an explicit point on the monotonic timeline instead of the current one.
+        Expired entries are removed and reported as ``None``; they are never
+        returned.  A successful lookup marks the entry as most recently used.
         """
-        current = _clock() if now is None else float(now)
         with self._lock:
             entry = self._entries.get(key)
             if entry is None:
                 return None
-            value, expires_at = entry
-            if expires_at <= current:
+            if entry.expires_at <= self._resolve_now(now):
                 del self._entries[key]
                 return None
             self._entries.move_to_end(key)
-            return value
+            return entry.value
 
-    def delete(self, key: str) -> bool:
-        """Remove ``key`` and return ``True`` only if a live entry was removed.
+    def delete(self, key):
+        """Remove ``key`` and return whether a live entry was removed.
 
-        Missing entries and already-expired entries both yield ``False``; a
-        stale entry encountered here is dropped from the internal mapping.
+        An expired entry is treated as absent, so ``False`` is returned for
+        it (the stale record is dropped either way).
         """
-        now = _clock()
         with self._lock:
             entry = self._entries.get(key)
             if entry is None:
                 return False
             del self._entries[key]
-            return entry[1] > now
+            return entry.expires_at > self._clock()
 
-    def clear(self) -> None:
+    def clear(self):
         """Remove every entry from the cache."""
         with self._lock:
             self._entries.clear()
+            self._next_expiry = math.inf
 
     # ------------------------------------------------------------------
-    # Internals (callers must already hold the lock)
+    # Mapping-friendly helpers (never expose values through logging)
     # ------------------------------------------------------------------
-    def _purge_expired(self, now: float) -> None:
-        """Drop every entry whose expiry is at or before ``now``."""
-        entries = self._entries
-        if not entries:
+    def __contains__(self, key):
+        """Return ``True`` only for keys holding a live (non-expired) entry."""
+        with self._lock:
+            entry = self._entries.get(key)
+            if entry is None:
+                return False
+            if entry.expires_at <= self._clock():
+                del self._entries[key]
+                return False
+            return True
+
+    def __len__(self):
+        """Return the number of live entries."""
+        with self._lock:
+            self._purge_expired(self._clock())
+            return len(self._entries)
+
+    def __iter__(self):
+        """Iterate over a snapshot of the live keys."""
+        with self._lock:
+            self._purge_expired(self._clock())
+            return iter(tuple(self._entries))
+
+    # ------------------------------------------------------------------
+    # Internals (always called with ``self._lock`` held)
+    # ------------------------------------------------------------------
+    def _purge_expired(self, now):
+        """Drop every entry whose expiry time is at or before ``now``."""
+        if now < self._next_expiry:
+            # ``_next_expiry`` is never larger than the real minimum expiry,
+            # so nothing can be expired at this point.
             return
-        expired = [key for key, entry in entries.items() if entry[1] <= now]
+        entries = self._entries
+        expired = [key for key, entry in entries.items() if entry.expires_at <= now]
         for key in expired:
             del entries[key]
+        self._next_expiry = min(
+            (entry.expires_at for entry in entries.values()), default=math.inf
+        )
+
+    def _resolve_now(self, now):
+        """Normalise the optional ``now`` argument onto the monotonic clock."""
+        current = self._clock()
+        if now is None:
+            return current
+        if isinstance(now, bool) or not isinstance(now, (int, float)):
+            raise ValueError("now must be a number of seconds")
+        value = float(now)
+        if math.isnan(value):
+            raise ValueError("now must be a number of seconds")
+        if value >= _WALL_CLOCK_THRESHOLD:
+            return current + (value - self._wall_clock())
+        return value
