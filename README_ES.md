@@ -94,7 +94,10 @@ flowchart TD
 1. **`SPEC_GATE` ([`scripts/spec_gate.py`](scripts/spec_gate.py)):**
    Valida que la especificación técnica contenga objetivos claros, tabla de invariantes de seguridad/lógica y fronteras explícitas de archivos permitidos y prohibidos.
 2. **`DIFF_GATE` ([`scripts/diff_gate.py`](scripts/diff_gate.py)):**
-   Inspecciona `git diff base...HEAD` en el worktree antes de ejecutar cualquier código. Si el Worker tocó un archivo no autorizado (ej. `pyproject.toml`, `.env`, configuración), la compuerta aborta de inmediato.
+   Inspecciona `git diff base...HEAD` en el worktree antes de ejecutar cualquier código. Aplica estrictamente:
+   - `modified_files ⊆ allowed_files`
+   - `forbidden_files ∩ modified_files = ∅`
+   Bloquea modificaciones sobre archivos de infraestructura de raíz (`pyproject.toml`, `.env*`, `RULES.md`, `orchestrator/`, `scripts/`).
 3. **`TEST_RUNNER` ([`scripts/test_runner.py`](scripts/test_runner.py)):**
    Ejecuta `pytest` exigiendo un umbral mínimo de cobertura de código (por defecto $\ge 85\%$). Si los tests fallan o la cobertura es insuficiente, se bloquea el paso al escaneo de seguridad.
 4. **`SAST_SCAN` ([`scripts/sast_runner.py`](scripts/sast_runner.py)):**
@@ -163,37 +166,135 @@ GLM_API_KEY=tu-clave-de-glm  # Opcional
 
 ---
 
-## 7. Guía de Uso
+## 7. Guía de Uso y Quick Start Seguro
 
-### Ejecutar una Tarea Completa
-Para ejecutar una tarea especificada (ej. `specs/TASK-002.md`):
-```powershell
-python orchestrator.py TASK-002
+### Flujo de Trabajo Recomendado (Paso a Paso)
+
+Para ejecutar una tarea de forma segura en la fábrica, se debe cumplir con las invariantes de estado limpio:
+
+1. **Trabajar Siempre desde `dev`:**
+   Asegúrate de estar en la rama `dev` y sincronizado con el repositorio remoto:
+   ```powershell
+   git checkout dev
+   git pull --ff-only origin dev
+   ```
+
+2. **Definir el Contrato de Especificación:**
+   Crea un nuevo archivo de especificación (ej. `specs/TASK-004.md`) basado estrictamente en [`specs/TEMPLATE.md`](specs/TEMPLATE.md). Define Criterios de Aceptación inequívocos (`[AC-xx]`), Invariantes de Seguridad (`[SEC-xx]`), listas explícitas de archivos permitidos y prohibidos (`Allowed files` / `Forbidden files`), y la Matriz de Pruebas completa.
+
+3. **Añadir y Commitear la SPEC antes de Ejecutar el Orquestador:**
+   > [!IMPORTANT]
+   > **Invariante Previo a la Ejecución:** Es indispensable añadir y hacer commit de la especificación técnica antes de invocar `orchestrator.py`. Confirma que `git status --short` retorne un árbol de trabajo completamente limpio. La compuerta final de integración (`merge_gate.py`) verifica el estado mediante `git status --porcelain` y abortará la fusión si detecta archivos sin commitear o sin seguimiento en la raíz del repositorio.
+   ```powershell
+   git add specs/TASK-004.md
+   git commit -m "spec: add TASK-004 contract"
+   git status --short  # Debe estar completamente vacío
+   ```
+
+4. **Ejecutar el Pipeline del Orquestador:**
+   ```powershell
+   python orchestrator.py TASK-004
+   ```
+   **Recorrido Determinista del Pipeline:**
+   * **`SPEC_GATE`:** Valida la estructura markdown, secciones obligatorias, trazabilidad de criterios AC/SEC y declaraciones de fronteras de archivos.
+   * **`BUILDING`:** Crea un Git worktree aislado (`.worktrees/wt_TASK-004`) en la rama `task/TASK-004`. El Worker genera código fuente y pruebas unitarias bajo `RULES.md`.
+   * **`DIFF_GATE`:** Aplica fronteras de archivos mediante teoría de conjuntos (`modified_files ⊆ allowed_files` y `forbidden_files ∩ modified_files = ∅`).
+   * **`TESTING`:** Ejecuta `pytest` exigiendo cobertura de código ($\ge 85\%$). Si hay fallos, Triage diagnostica la causa y gestiona reintentos dentro de la época.
+   * **`SAST_SCAN`:** Escanea el código con Semgrep y Bandit; los hallazgos son discriminados por el Security Filter para descartar falsos positivos.
+   * **`LOGIC_AUDIT`:** Un modelo independiente audita semánticamente el diff de Git contra los invariantes de seguridad de la especificación.
+   * **`AUTO_MERGE`:** `merge_gate.py` comprueba que el repositorio principal esté limpio y ejecuta una fusión atómica Fast-Forward en `dev` (`git merge --ff-only`).
+
+5. **Verificar el Resultado:**
+   Al finalizar la ejecución, comprueba la integridad del sistema:
+   ```powershell
+   python -m pytest -v tests/
+   git status --short
+   git log --oneline --decorate -5
+   ```
+
+---
+
+### Ejemplo de Flujo Copiable
+
+```bash
+git checkout dev
+git pull --ff-only origin dev
+
+# Create specs/TASK-004.md from specs/TEMPLATE.md
+
+git add specs/TASK-004.md
+git commit -m "spec: add TASK-004 contract"
+git status --short
+
+python orchestrator.py TASK-004
+
+python -m pytest -v tests/
+git status --short
+git log --oneline --decorate -5
 ```
 
-### Modo Simulación (Dry-Run sin consumo de API)
+---
+
+### Recuperación Determinista de Merge (`--resume-merge`)
+
+Si una tarea autorizada superó con éxito todas las compuertas de verificación (`SPEC_GATE`, `DIFF_GATE`, `TESTING`, `SAST_SCAN`, `LOGIC_AUDIT`) pero se detuvo específicamente durante `AUTO_MERGE` (por ejemplo, por modificaciones locales sin commitear en el árbol principal):
+
+```powershell
+python orchestrator.py --resume-merge TASK-004
+```
+
+> [!NOTE]
+> **Alcance Estricto de `--resume-merge`:**
+> * `--resume-merge` es **exclusivamente un mecanismo de recuperación** cuando la tarea se detuvo en `AUTO_MERGE`.
+> * **No** vuelve a ejecutar Worker, pytest, SAST, Triage ni agentes de auditoría de seguridad.
+> * **No** consume presupuestos de Worker ni de replanificación (`worker_attempts_in_epoch` y `total_cumulative_worker_runs` permanecen intactos).
+> * **No** es una solución genérica para estados arbitrarios de `HALT_HUMAN` (por ejemplo, fallos de tests o rechazos de seguridad no pueden eludirse con `--resume-merge`).
+> * Valida la existencia de la rama de tarea, la limpieza del repositorio principal y la relación de ancestralidad, ejecutando únicamente `git merge --ff-only`.
+
+---
+
+### Diagnóstico y Solución de Problemas (Troubleshooting)
+
+#### La SPEC sin seguimiento bloquea `AUTO_MERGE` (Caso Real TASK-003)
+* **Síntoma:** Durante la ejecución, todas las compuertas aprueban, pero el pipeline se detiene en el paso final de integración con `HALT_HUMAN`:
+  ```text
+  [MERGE_GATE] Main repository has uncommitted modifications. Merge aborted.
+  ```
+* **Causa Raíz:** Crear `specs/TASK-XXX.md` sin commitearla deja el archivo sin seguimiento (`?? specs/TASK-XXX.md`). Aunque el orquestador trabaja dentro de `.worktrees/wt_TASK-XXX`, cuando `AUTO_MERGE` intenta hacer fast-forward merge de `task/TASK-XXX` hacia `dev`, `merge_gate.py` detecta suciedad en el repositorio principal.
+* **Solución Preventiva:** Siempre añade y commitea `specs/TASK-XXX.md` **antes** de ejecutar `orchestrator.py` (`git add specs/... && git commit -m "spec: ..."`).
+* **Solución de Recuperación:** Si esto ocurre:
+  1. Haz commit del archivo de especificación pendiente:
+     ```powershell
+     git add specs/TASK-XXX.md
+     git commit -m "spec: add TASK-XXX contract"
+     git status --short  # Confirmar limpio
+     ```
+  2. Ejecuta la recuperación atómica de merge sin re-ejecutar agentes ni gastar tokens:
+     ```powershell
+     python orchestrator.py --resume-merge TASK-XXX
+     ```
+
+---
+
+### Modos Adicionales de Operación
+
+#### Modo Simulación (Dry-Run sin consumo de API)
 Permite validar compuertas, creación de ramas y flujo de integración sin realizar llamadas a LLMs:
 ```powershell
 python orchestrator.py TASK-001 --simulate
 ```
 
-### Recuperación Determinista de Merge (`--resume-merge`)
-Si una tarea superó todas las compuertas pero se detuvo en la fusión (ej. por cambios locales en `dev`):
-```powershell
-python orchestrator.py --resume-merge TASK-002
-```
-
-### Ejecutar la Suite de Pruebas
+#### Ejecutar la Suite de Pruebas
 ```powershell
 python -m pytest -v tests/
 ```
-*(Actualmente 62 pruebas unitarias y de integración pasan al 100%).*
+Todas las pruebas unitarias y de integración se ejecutan localmente sin requerir acceso a redes externas ni claves de API.
 
 ---
 
-## 8. Casos de Estudio: `TASK-001` y `TASK-002`
+## 8. Casos de Estudio: `TASK-001`, `TASK-002` y `TASK-003`
 
-El repositorio incluye la ejecución y validación completa de dos tareas reales integradas en `dev`:
+El repositorio incluye la ejecución y validación completa de tres tareas reales integradas en `dev`:
 
 1. **`TASK-001`**: Módulo de validación de tokens (`src/auth/token_validator.py`):
    * **Especificación:** [`specs/TASK-001.md`](specs/TASK-001.md) definió validación de tokens con comparación segura (`hmac.compare_digest`), rechazando tokens vacíos o inválidos.
@@ -205,6 +306,11 @@ El repositorio incluye la ejecución y validación completa de dos tareas reales
    * **Worker:** Generó la función pura `validate_password(password: str) -> bool` y 24 pruebas unitarias exhaustivas en [`tests/test_password_validator.py`](tests/test_password_validator.py).
    * **Compuertas:** Superó `SPEC_GATE`, `DIFF_GATE`, `TESTING` (cobertura 100%), `SAST_SCAN` y `LOGIC_AUDIT`.
    * **Integración:** Recuperado e integrado en `dev` mediante `--resume-merge` tras resolución de divergenicas, verificable en el historial de Git.
+
+3. **`TASK-003`**: Limitador de tasa en memoria (`src/security/rate_limiter.py`):
+   * **Especificación:** [`specs/TASK-003.md`](specs/TASK-003.md) definió una clase limitadora por ventana temporal configurable `RateLimiter` (`allow(client_id, now)`) con criterios de aceptación `[AC-01]` a `[AC-05]` e invariantes de seguridad estrictos `[SEC-01]` a `[SEC-03]` (sin E/S, sin persistencia externa, sin filtrado de identificadores en logs y estado encapsulado en la instancia).
+   * **Worker:** Generó la clase `RateLimiter` y pruebas unitarias exhaustivas en [`tests/test_rate_limiter.py`](tests/test_rate_limiter.py).
+   * **Compuertas e Integración:** Superó las compuertas de verificación (`SPEC_GATE`, `DIFF_GATE`, `TESTING`, `SAST_SCAN`, `LOGIC_AUDIT`), se detuvo inicialmente en `AUTO_MERGE` con `HALT_HUMAN` debido a un archivo de especificación sin seguimiento en el repositorio principal, y se integró limpiamente en `dev` tras asegurar la limpieza del árbol de trabajo.
 
 ---
 
@@ -249,19 +355,23 @@ El repositorio incluye la ejecución y validación completa de dos tareas reales
 ├── specs/                      # Especificaciones de tareas
 │   ├── TASK-001.md             # Especificación de autenticación de tokens
 │   ├── TASK-002.md             # Especificación de validador de contraseñas
+│   ├── TASK-003.md             # Especificación de limitador de tasa en memoria
 │   └── TEMPLATE.md             # Plantilla canónica de especificaciones
 │
 ├── src/                        # Código productivo generado e integrado
-│   └── auth/
-│       ├── password_validator.py
-│       └── token_validator.py
+│   ├── auth/
+│   │   ├── password_validator.py
+│   │   └── token_validator.py
+│   └── security/
+│       └── rate_limiter.py
 │
-└── tests/                      # Suite de pruebas automatizadas (62 tests)
+└── tests/                      # Suite de pruebas automatizadas
     ├── test_deepseek_adapter.py
     ├── test_diff_gate.py
     ├── test_e2e_dry_run.py
     ├── test_network_retry.py
     ├── test_password_validator.py
+    ├── test_rate_limiter.py
     ├── test_resume_merge.py
     ├── test_spec_gate.py
     ├── test_state_manager.py

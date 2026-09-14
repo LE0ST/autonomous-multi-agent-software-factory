@@ -193,37 +193,135 @@ GLM_API_KEY=your-glm-api-key  # Optional
 
 ---
 
-## 9. Usage
+## 9. Quick Start & Task Execution Workflow
 
-### Run a Task Pipeline
-To execute a task defined in a specification (e.g. `specs/TASK-002.md`):
+### Safe Task Execution Workflow (Step-by-Step)
+
+Executing a task safely within the factory requires adherence to clean-state invariants:
+
+1. **Always Work from `dev`:**
+   Switch to `dev` and ensure your local branch is strictly up-to-date with remote upstream:
+   ```bash
+   git checkout dev
+   git pull --ff-only origin dev
+   ```
+
+2. **Define the Specification Contract:**
+   Create a new specification file (e.g. `specs/TASK-004.md`) adhering strictly to [`specs/TEMPLATE.md`](specs/TEMPLATE.md). Define unambiguous Acceptance Criteria (`[AC-xx]`), Security Invariants (`[SEC-xx]`), explicit file boundary whitelists (`Allowed files` / `Forbidden files`), and the complete Test Matrix.
+
+3. **Stage and Commit the Specification Before Pipeline Execution:**
+   > [!IMPORTANT]
+   > **Pre-Execution Invariant:** You must stage and commit the specification contract before launching `orchestrator.py`. Ensure that `git status --short` returns a completely clean working tree. The final merge gate (`merge_gate.py`) verifies working tree cleanliness via `git status --porcelain` and will reject integration if untracked or modified files are detected in the repository root.
+   ```bash
+   git add specs/TASK-004.md
+   git commit -m "spec: add TASK-004 contract"
+   git status --short  # Must be completely empty
+   ```
+
+4. **Execute the Orchestrator:**
+   ```bash
+   python orchestrator.py TASK-004
+   ```
+   **Deterministic Pipeline Progression:**
+   * **`SPEC_GATE`:** Validates markdown structure, required sections, AC/SEC traceability, and file boundary declarations.
+   * **`BUILDING`:** Allocates an isolated Git worktree (`.worktrees/wt_TASK-004`) on branch `task/TASK-004`. The Worker generates source code and unit tests governed by `RULES.md`.
+   * **`DIFF_GATE`:** Enforces set-theoretic file boundaries (`modified_files ⊆ allowed_files` and `forbidden_files ∩ modified_files = ∅`).
+   * **`TESTING`:** Executes `pytest` with code coverage enforcement ($\ge 85\%$). Test failures trigger automated diagnosis via Triage and epoch retry loops.
+   * **`SAST_SCAN`:** Scans generated code with Semgrep and Bandit; findings are filtered by Security Filter to eliminate false positives.
+   * **`LOGIC_AUDIT`:** An independent LLM auditor verifies that the semantic Git diff strictly satisfies all stated security invariants.
+   * **`AUTO_MERGE`:** `merge_gate.py` verifies main repository cleanliness and performs an atomic fast-forward merge into `dev` (`git merge --ff-only`).
+
+5. **Verify the Integration Outcome:**
+   After pipeline execution finishes, verify system health:
+   ```bash
+   python -m pytest -v tests/
+   git status --short
+   git log --oneline --decorate -5
+   ```
+
+---
+
+### Copy-Pasteable Workflow Example
+
 ```bash
-python orchestrator.py TASK-002
+git checkout dev
+git pull --ff-only origin dev
+
+# Create specs/TASK-004.md from specs/TEMPLATE.md
+
+git add specs/TASK-004.md
+git commit -m "spec: add TASK-004 contract"
+git status --short
+
+python orchestrator.py TASK-004
+
+python -m pytest -v tests/
+git status --short
+git log --oneline --decorate -5
 ```
 
-### Dry-Run / Simulation Mode
+---
+
+### Deterministic Merge Recovery (`--resume-merge`)
+
+If an authorized task successfully passes all verification gates (`SPEC_GATE`, `DIFF_GATE`, `TESTING`, `SAST_SCAN`, `LOGIC_AUDIT`) but stops specifically during `AUTO_MERGE` (e.g., due to local uncommitted modifications or working tree dirt in the main repository):
+
+```bash
+python orchestrator.py --resume-merge TASK-004
+```
+
+> [!NOTE]
+> **Strict Operational Boundary of `--resume-merge`:**
+> * `--resume-merge` is **strictly a recovery mechanism** for tasks authorized at `AUTO_MERGE`.
+> * It **never** re-runs Worker, pytest, SAST, Triage, or Logic Security agents.
+> * It **never** consumes Worker attempts or replan budgets (`worker_attempts_in_epoch` and `total_cumulative_worker_runs` remain untouched).
+> * It is **not** a generic resolution for arbitrary `HALT_HUMAN` states (e.g. failing unit tests or security rejections cannot be bypassed with `--resume-merge`).
+> * It validates that the task branch exists, the main tree is clean, and ancestor relationships hold, executing only `git merge --ff-only`.
+
+---
+
+### Troubleshooting & Common Pitfalls
+
+#### Untracked Spec File Aborts `AUTO_MERGE` (TASK-003 Case Study)
+* **Symptom:** During task execution, all verification gates pass, but the pipeline halts at the final integration step with `HALT_HUMAN`:
+  ```text
+  [MERGE_GATE] Main repository has uncommitted modifications. Merge aborted.
+  ```
+* **Root Cause:** Creating `specs/TASK-XXX.md` without committing it leaves the file untracked (`?? specs/TASK-XXX.md`). The orchestrator isolates code generation inside `.worktrees/wt_TASK-XXX`, but when `AUTO_MERGE` attempts to fast-forward merge `task/TASK-XXX` back into `dev`, `merge_gate.py` detects a dirty main repository.
+* **Preventative Solution:** Always stage and commit `specs/TASK-XXX.md` **before** executing `orchestrator.py` (`git add specs/... && git commit -m "spec: ..."`).
+* **Recovery Solution:** If caught in this state:
+  1. Commit the untracked specification file:
+     ```bash
+     git add specs/TASK-XXX.md
+     git commit -m "spec: add TASK-XXX contract"
+     git status --short  # Ensure clean
+     ```
+  2. Execute atomic merge recovery without re-running agents or consuming tokens:
+     ```bash
+     python orchestrator.py --resume-merge TASK-XXX
+     ```
+
+---
+
+### Additional Operational Modes
+
+#### Dry-Run / Simulation Mode
 Validates gates, branching, and worktree logic without spending API tokens:
 ```bash
 python orchestrator.py TASK-001 --simulate
 ```
 
-### Deterministic Merge Recovery (`--resume-merge`)
-If a task previously passed all verification gates but halted during merge due to uncommitted working tree changes:
+#### Run the Test Suite
 ```bash
-python orchestrator.py --resume-merge TASK-002
+python -m pytest -v tests/
 ```
-
-### Run the Test Suite
-```bash
-python -m pytest tests/
-```
-Currently, **62 unit and integration tests pass** out-of-the-box without requiring external network access or API credentials.
+All unit and integration tests run locally without requiring external network access or API credentials.
 
 ---
 
-## 10. Case Studies: `TASK-001` and `TASK-002`
+## 10. Case Studies: `TASK-001`, `TASK-002`, and `TASK-003`
 
-The repository contains the complete development and verification history for two integrated production tasks:
+The repository contains the complete development and verification history for three integrated production tasks:
 
 1. **`TASK-001` — Token Validator (`src/auth/token_validator.py`):**
    * **Specification:** [`specs/TASK-001.md`](specs/TASK-001.md) defined token verification using constant-time digest comparison (`hmac.compare_digest`), rejecting empty or invalid inputs.
@@ -235,6 +333,11 @@ The repository contains the complete development and verification history for tw
    * **Worker:** Generated the pure helper function `validate_password(password: str) -> bool` and 24 unit tests in [`tests/test_password_validator.py`](tests/test_password_validator.py).
    * **Gates:** Passed `SPEC_GATE`, `DIFF_GATE`, `TESTING` (100% code coverage), `SAST_SCAN`, and `LOGIC_AUDIT`.
    * **Recovery:** Successfully integrated into `dev` using `--resume-merge` after resolving divergence, verifiable in the Git commit history.
+
+3. **`TASK-003` — In-Memory Rate Limiter (`src/security/rate_limiter.py`):**
+   * **Specification:** [`specs/TASK-003.md`](specs/TASK-003.md) defined a configurable time-window rate limiter class `RateLimiter` (`allow(client_id, now)`) with acceptance criteria `[AC-01]` through `[AC-05]` and strict security invariants `[SEC-01]` through `[SEC-03]` (no I/O, no logging of client IDs, no external persistence, encapsulated instance state).
+   * **Worker:** Generated `RateLimiter` and comprehensive unit tests in [`tests/test_rate_limiter.py`](tests/test_rate_limiter.py).
+   * **Gates & Integration:** Passed all verification gates (`SPEC_GATE`, `DIFF_GATE`, `TESTING`, `SAST_SCAN`, `LOGIC_AUDIT`), initially halted at `AUTO_MERGE` with `HALT_HUMAN` because of an untracked specification file in the main working tree, and was subsequently integrated into `dev` after resolving repository cleanliness.
 
 ---
 
@@ -279,19 +382,23 @@ The repository contains the complete development and verification history for tw
 ├── specs/                      # Task specifications
 │   ├── TASK-001.md             # Token validator specification
 │   ├── TASK-002.md             # Secure password validator specification
+│   ├── TASK-003.md             # In-memory rate limiter specification
 │   └── TEMPLATE.md             # Canonical specification template
 │
 ├── src/                        # Production code generated and integrated
-│   └── auth/
-│       ├── password_validator.py
-│       └── token_validator.py
+│   ├── auth/
+│   │   ├── password_validator.py
+│   │   └── token_validator.py
+│   └── security/
+│       └── rate_limiter.py
 │
-└── tests/                      # Automated test suite (62 tests)
+└── tests/                      # Automated test suite
     ├── test_deepseek_adapter.py
     ├── test_diff_gate.py
     ├── test_e2e_dry_run.py
     ├── test_network_retry.py
     ├── test_password_validator.py
+    ├── test_rate_limiter.py
     ├── test_resume_merge.py
     ├── test_spec_gate.py
     ├── test_state_manager.py
