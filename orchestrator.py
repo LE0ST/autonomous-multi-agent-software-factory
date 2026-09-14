@@ -21,7 +21,7 @@ from scripts.test_runner import run_tests
 from scripts.sast_runner import run_sast, EXIT_NO_FINDINGS, EXIT_FINDINGS
 from scripts.merge_gate import execute_fast_forward_merge, is_repo_clean
 from scripts.worktree_manager import create_worktree, remove_worktree
-from adapters import GeminiAdapter, DeepSeekAdapter, GLMAdapter, NetworkTransportError
+from adapters import GeminiAdapter, DeepSeekAdapter, GLMAdapter, NetworkTransportError, sanitize_secret_text
 
 def load_orchestrator_config(repo_root: Path) -> dict:
     cfg_file = repo_root / "orchestrator" / "config.json"
@@ -190,16 +190,18 @@ def run_pipeline(task_id: str, base_branch: str = "dev", simulate: bool = False)
         try:
             audit_res = sec_client.audit_logic_and_security(spec_path.read_text(encoding="utf-8"), diff_output)
         except NetworkTransportError as e:
-            print(f"\n[!] Security Audit service unavailable: {e}")
+            clean_err = sanitize_secret_text(e)
+            print(f"\n[!] Security Audit service unavailable: {clean_err}")
             sm.request_human_review(
                 reason=f"Logic Security LLM unavailable after retries (HTTP {e.status_code or 'network'}). "
-                       f"Detail: {e}",
+                       f"Detail: {clean_err}",
                 gate="LOGIC_AUDIT"
             )
             return
         except Exception as e:
-            print(f"\n[!] Unexpected error during security audit: {e}")
-            sm.halt_human(f"Unrecoverable failure in Logic Security Audit: {e}")
+            clean_err = sanitize_secret_text(e)
+            print(f"\n[!] Unexpected error during security audit: {clean_err}")
+            sm.halt_human(f"Unrecoverable failure in Logic Security Audit: {clean_err}")
             return
 
         if audit_res.status == "FAIL":

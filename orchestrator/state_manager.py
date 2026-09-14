@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Literal
+from adapters.sanitizer import sanitize_secret_text
 
 VALID_STATES = [
     "INIT",
@@ -101,15 +102,16 @@ class StateManager:
             
         old_state = self.data["current_state"]
         self.data["current_state"] = new_state
+        safe_details = sanitize_secret_text(details)
         self.data["history"].append({
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "from": old_state,
             "to": new_state,
-            "details": details,
+            "details": safe_details,
             "epoch": self.data["epoch"]
         })
         self.save()
-        print(f"[FSM] {old_state} -> {new_state} | {details}")
+        print(f"[FSM] {old_state} -> {new_state} | {safe_details}")
 
     def set_execution_status(self, status: ExecutionStatus):
         self.data["execution_status"] = status
@@ -173,14 +175,15 @@ class StateManager:
         self.save()
 
     def halt_human(self, reason: str):
-        self.transition("HALT_HUMAN", reason)
+        safe_reason = sanitize_secret_text(reason)
+        self.transition("HALT_HUMAN", safe_reason)
         self.set_execution_status("FAILED")
         
         report_path = Path(f"CRASH_REPORT_{self.task_id}.md")
         content = (
             f"# CIRCUIT BREAKER TRIGGERED - {self.task_id}\n\n"
             f"- **Date:** {datetime.now(timezone.utc).isoformat()}\n"
-            f"- **Reason:** {reason}\n"
+            f"- **Reason:** {safe_reason}\n"
             f"- **Final Epoch:** {self.data['epoch']}\n"
             f"- **Total Worker Builds:** {self.data['budgets']['total_cumulative_worker_runs']}/{self.data['budgets']['max_cumulative_worker_runs']}\n"
             f"- **Logic Replans Used:** {self.data['budgets']['logic_replans_used']}/{self.data['budgets']['max_logic_replans']}\n"
@@ -192,16 +195,17 @@ class StateManager:
         print(f"\n[CIRCUIT BREAKER] Forced halt. See {report_path.name}")
         
         if self.raise_on_halt:
-            raise RuntimeError(f"Circuit Breaker triggered: {reason}")
+            raise RuntimeError(f"Circuit Breaker triggered: {safe_reason}")
         sys.exit(1)
 
     def request_human_review(self, reason: str, gate: str = "LOGIC_AUDIT"):
         """Suspends the pipeline in a controlled manner without consuming Worker replans."""
-        self.transition("HUMAN_REVIEW", f"Human review / service unavailable at {gate}: {reason}")
+        safe_reason = sanitize_secret_text(reason)
+        self.transition("HUMAN_REVIEW", f"Human review / service unavailable at {gate}: {safe_reason}")
         self.set_execution_status("NEEDS_HUMAN_REVIEW")
         self.data["blocked_reason"] = {
             "gate": gate,
-            "reason": reason,
+            "reason": safe_reason,
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
         self.save()
@@ -211,7 +215,7 @@ class StateManager:
             f"# HUMAN REVIEW REQUIRED - {self.task_id}\n\n"
             f"- **Date:** {datetime.now(timezone.utc).isoformat()}\n"
             f"- **Gate:** {gate}\n"
-            f"- **Reason:** {reason}\n"
+            f"- **Reason:** {safe_reason}\n"
             f"- **Task Status:** Prior gates (SPEC, DIFF, TESTS, SAST) passed successfully.\n"
             f"- **Budget Action:** NO Worker attempts or logic/security replans were consumed.\n"
             f"- **Worktree:** Code generated in `.worktrees/wt_{self.task_id}` is preserved and intact.\n\n"
@@ -221,7 +225,7 @@ class StateManager:
         print(f"\n[HUMAN REVIEW] Pipeline paused in controlled state. See {report_path.name}")
         
         if self.raise_on_halt:
-            raise RuntimeError(f"Human review required ({gate}): {reason}")
+            raise RuntimeError(f"Human review required ({gate}): {safe_reason}")
         sys.exit(0)
 
     def can_resume_merge(self) -> tuple[bool, str]:

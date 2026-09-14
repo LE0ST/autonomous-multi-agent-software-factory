@@ -7,6 +7,7 @@ from .network_retry import retry_with_backoff, NetworkTransportError
 from .gemini_adapter import GeminiAdapter
 from .deepseek_adapter import DeepSeekAdapter
 from .glm_adapter import GLMAdapter
+from .sanitizer import sanitize_secret_text
 
 __all__ = [
     "TriageOutput",
@@ -16,5 +17,6 @@ __all__ = [
     "NetworkTransportError",
     "GeminiAdapter",
     "DeepSeekAdapter",
-    "GLMAdapter"
+    "GLMAdapter",
+    "sanitize_secret_text"
 ]

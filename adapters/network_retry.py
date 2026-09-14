@@ -8,6 +8,7 @@ import functools
 import logging
 from typing import Callable, Any
 import requests
+from .sanitizer import sanitize_secret_text
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +78,7 @@ def retry_with_backoff(
                     
                     if not is_retryable:
                         # Fail immediately without waiting or consuming retries
-                        logger.error(f"[Network] Permanent error in {func.__name__}: {reason}. Aborting.")
+                        logger.error(f"[Network] Permanent error in {func.__name__}: {sanitize_secret_text(reason)}. Aborting.")
                         raise
                         
                     wait_time = delay
@@ -85,18 +86,20 @@ def retry_with_backoff(
                         wait_time = min(server_retry_after, max_delay)
                     else:
                         wait_time = min(delay, max_delay)
-                        delay *= backoff_factor
+                    delay *= backoff_factor
 
                     print(
                         f"[Network Retry] Attempt {attempt}/{max_retries} failed for {func.__name__} "
-                        f"due to {reason}. Retrying in {wait_time:.1f}s..."
+                        f"due to {sanitize_secret_text(reason)}. Retrying in {wait_time:.1f}s..."
                     )
                     time.sleep(wait_time)
                     
+            clean_error_str = sanitize_secret_text(str(last_error))
+            clean_resp_text = sanitize_secret_text(last_resp_text) if last_resp_text else None
             raise NetworkTransportError(
-                f"Persistent network transport failure after {max_retries} attempts in {func.__name__}: {last_error}",
+                f"Persistent network transport failure after {max_retries} attempts in {func.__name__}: {clean_error_str}",
                 status_code=last_code,
-                response_text=last_resp_text
-            ) from last_error
+                response_text=clean_resp_text
+            ) from None
         return wrapper
     return decorator

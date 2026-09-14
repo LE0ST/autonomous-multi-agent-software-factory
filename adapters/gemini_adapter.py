@@ -48,7 +48,11 @@ class GeminiAdapter:
                 f"- [TEST-01] Test core functionality and security (Covers: [AC-01], [SEC-01])\n"
             )
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
+        headers = {
+            "x-goog-api-key": self.api_key,
+            "Content-Type": "application/json"
+        }
         prompt = (
             f"Act as Software Architect. Generate the specification for '{task_id}: {title}'.\n"
             f"Description: {description}.\n"
@@ -56,7 +60,7 @@ class GeminiAdapter:
             f"## 1. Scope and Boundaries\n## 2. Acceptance Criteria\n## 3. Security Invariants\n## 4. Required Test Matrix\n"
             f"All [AC-xx] and [SEC-xx] must be mapped in the Matrix to [TEST-xx]."
         )
-        resp = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
+        resp = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, headers=headers, timeout=30)
         resp.raise_for_status()
         data = resp.json()
         return data["candidates"][0]["content"]["parts"][0]["text"]
@@ -74,7 +78,11 @@ class GeminiAdapter:
                 root_cause="Incorrect string comparison instead of constant-time digest comparison"
             )
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
+        headers = {
+            "x-goog-api-key": self.api_key,
+            "Content-Type": "application/json"
+        }
         prompt = (
             "Act as Senior Test Failure Triage Engineer. Analyze this pytest failure report.\n"
             "You must respond EXCLUSIVELY with valid JSON matching this exact schema:\n"
@@ -88,7 +96,7 @@ class GeminiAdapter:
             "}\n\n"
             f"Failure report:\n{json.dumps(failure_payload, indent=2)}"
         )
-        resp = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
+        resp = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, headers=headers, timeout=30)
         resp.raise_for_status()
         data = resp.json()
         raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
@@ -106,7 +114,11 @@ class GeminiAdapter:
                 justification="The analyzed value is a safe internal mock and not an exposed production credential."
             )
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
+        headers = {
+            "x-goog-api-key": self.api_key,
+            "Content-Type": "application/json"
+        }
         prompt = (
             "Act as AppSec Engineer. Classify this SAST finding.\n"
             "You must respond EXCLUSIVELY with valid JSON matching this exact schema:\n"
@@ -117,7 +129,7 @@ class GeminiAdapter:
             "}\n\n"
             f"SAST Finding:\n{json.dumps(finding, indent=2)}"
         )
-        resp = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
+        resp = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, headers=headers, timeout=30)
         resp.raise_for_status()
         data = resp.json()
         raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
@@ -140,7 +152,11 @@ class GeminiAdapter:
                 justification="Simulated audit in local test environment. Does not represent production validation."
             )
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
+        headers = {
+            "x-goog-api-key": self.api_key,
+            "Content-Type": "application/json"
+        }
         prompt = (
             "Act as Principal Security Auditor. Evaluate whether the code violates [SEC-xx] invariants from the spec.\n"
             "You must respond EXCLUSIVELY with valid JSON matching this schema:\n"
@@ -152,7 +168,7 @@ class GeminiAdapter:
             "}\n\n"
             f"Spec:\n{spec_content}\n\nImplemented Diff:\n{code_diff}"
         )
-        resp = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=45)
+        resp = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, headers=headers, timeout=45)
         resp.raise_for_status()
         data = resp.json()
         raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
