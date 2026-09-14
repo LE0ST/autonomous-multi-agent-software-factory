@@ -1,254 +1,295 @@
 # Autonomous Multi-Agent Software Factory
 
-> **Sistema de Desarrollo Autónomo de Software Multi-Agente con Control de Estados Finitos (FSM), Compuertas Deterministas y Aislamiento por Git Worktrees.**
+English | [Español](README_ES.md)
 
+> **Autonomous Multi-Agent Software Development System governed by Finite State Machines (FSM), Deterministic Verification Gates, Execution Budgets, and Git Worktree Isolation.**
+
+[![CI](https://github.com/LE0ST/autonomous-multi-agent-software-factory/actions/workflows/ci.yml/badge.svg)](https://github.com/LE0ST/autonomous-multi-agent-software-factory/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests: 61 passed](https://img.shields.io/badge/tests-61%20passed-brightgreen.svg)]()
 [![Code Style: Flake8/Black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
 ---
 
 > [!WARNING]
-> **Aviso de Proyecto Experimental:**  
-> Este es un proyecto de investigación y portafolio enfocado en la gobernanza, seguridad y control de ejecución de agentes autónomos de codificación. No está pensado para producción sin supervisión humana y opera bajo presupuestos de ejecución estrictos para prevenir loops infinitos y gastos descontrolados de API.
+> **Experimental Project Notice:**
+> This is a research and portfolio project focused on execution control, safety invariants, and governance for autonomous coding agents. It is not designed for unmonitored production use and enforces strict execution budgets to prevent infinite loops and runaway API costs.
 
 ---
 
-## 1. El Problema que Resuelve
+## 1. Problem Statement
 
-La mayoría de los sistemas multi-agente contemporáneos sufren de deficiencias críticas al generar software en el mundo real:
+Most contemporary multi-agent coding systems encounter critical failure modes when operating on real-world software projects:
 
-* **Alucinaciones no verificadas:** Confianza excesiva en la auto-evaluación del propio modelo de lenguaje.
-* **Fuga de fronteras de código (Scope Creep):** Agentes que modifican archivos de configuración, eliminan tests existentes o tocan módulos ajenos a la tarea encomendada.
-* **Loops infinitos y consumo ciego de tokens:** Agentes que entran en bucles de ensayo y error sin límites formales ni presupuestos de parada.
-* **Corrupción del árbol de trabajo principal:** Modificaciones realizadas directamente en la rama principal que dejan el repositorio en un estado inconsistente ante fallos de compilación o pruebas.
-* **Integraciones sucias:** Fusiones no atómicas o con conflictos silenciosos en el control de versiones.
+* **Unchecked Hallucinations:** Over-reliance on LLM self-evaluations and optimistic "looks good to me" feedback loops.
+* **Scope Creep & Code Boundary Violations:** Agents that arbitrarily modify configuration files, delete existing tests to force pass rates, or edit modules outside their assigned scope.
+* **Infinite Trial-and-Error Loops:** Unbounded token consumption as agents cycle through repetitive debugging attempts without formal termination budgets.
+* **Working Tree Corruption:** Direct modifications made to the active development branch that leave the repository broken when a build or test fails mid-flight.
+* **Unsafe Git Integrations:** Non-atomic merges or silent merge conflicts integrated directly into branches without clean-state validation.
 
-### La Solución: Fábrica Determinista Gobernada
+### The Solution: Deterministically Governed Factory
 
-**Autonomous Multi-Agent Software Factory** introduce una arquitectura donde los modelos de lenguaje (LLMs) **únicamente generan propuestas de código y diagnósticos**, mientras que **el control de flujo, la verificación de seguridad, la ejecución de pruebas y la integración a Git son gobernados por compuertas deterministas no probabilísticas** y una Máquina de Estados Finitos (FSM).
+**Autonomous Multi-Agent Software Factory** decouples generation from governance. **LLMs are strictly restricted to proposing code, specifications, and diagnostics**, while **workflow control, test execution, security analysis, file boundaries, and Git integration are enforced by non-probabilistic deterministic gates** and a persistent Finite State Machine (FSM).
 
 ---
 
-## 2. Diagrama del Pipeline y Arquitectura
+## 2. Architecture and Pipeline Flow
 
 ```mermaid
 flowchart TD
-    Start([Inicio: TASK-XXX]) --> INIT[INIT: Cargar Config & FSM]
-    INIT --> SPEC_GATE{SPEC GATE<br/>¿Existe y es válida?}
+    Start([Start: TASK-XXX]) --> INIT[INIT: Load Config & FSM]
+    INIT --> SPEC_GATE{SPEC GATE<br/>Exists and valid?}
     
-    SPEC_GATE -- No / Falta --> ARCHITECT[ARCHITECT: Gemini 3.8 Flash<br/>Genera SPEC tabular]
+    SPEC_GATE -- No / Missing --> ARCHITECT[ARCHITECT: Gemini 3.8 Flash<br/>Generates tabular SPEC]
     ARCHITECT --> SPEC_GATE
     
-    SPEC_GATE -- Aprobada --> WORKTREE[Aislamiento: Git Worktree<br/>.worktrees/wt_TASK-XXX]
-    WORKTREE --> WORKER[WORKER: DeepSeek Flash<br/>Genera código y tests unitarios]
+    SPEC_GATE -- Passed --> WORKTREE[Isolation: Git Worktree<br/>.worktrees/wt_TASK-XXX]
+    WORKTREE --> WORKER[WORKER: DeepSeek Flash<br/>Generates code & tests]
     
-    WORKER --> DIFF_GATE{DIFF GATE<br/>¿Respeta fronteras de archivos?}
-    DIFF_GATE -- Violación --> REVERT_DIFF[Revertir cambios] --> REPLAN_SEC{¿Presupuesto de replanificación?}
+    WORKER --> DIFF_GATE{DIFF GATE<br/>Respects file boundaries?}
+    DIFF_GATE -- Violation --> REVERT_DIFF[Revert changes] --> REPLAN_SEC{Security replan budget?}
     
-    DIFF_GATE -- Aprobado --> TESTING{TEST RUNNER<br/>Pytest + Cobertura >= 85%}
-    TESTING -- Fallo de tests --> TRIAGE[TRIAGE: Gemini 3.5 Flash Lite<br/>Diagnostica causa raíz]
-    TRIAGE --> RETRY_EPOCH{¿Reintentos en época?}
-    RETRY_EPOCH -- Sí --> WORKER
-    RETRY_EPOCH -- No --> REPLAN_LOG{¿Presupuesto de replanificación?}
-    REPLAN_LOG -- Disponible --> NEW_EPOCH[Nueva Época] --> WORKER
-    REPLAN_LOG -- Agotado --> HALT_HUMAN[HALT_HUMAN: Circuit Breaker]
+    DIFF_GATE -- Passed --> TESTING{TEST RUNNER<br/>Pytest + Coverage >= 85%}
+    TESTING -- Test Failure --> TRIAGE[TRIAGE: Gemini 3.5 Flash Lite<br/>Diagnoses root cause]
+    TRIAGE --> RETRY_EPOCH{Retries left in epoch?}
+    RETRY_EPOCH -- Yes --> WORKER
+    RETRY_EPOCH -- No --> REPLAN_LOG{Logic replan budget?}
+    REPLAN_LOG -- Available --> NEW_EPOCH[New Epoch] --> WORKER
+    REPLAN_LOG -- Exhausted --> HALT_HUMAN[HALT_HUMAN: Circuit Breaker]
     
-    TESTING -- Aprobado --> SAST{SAST SCAN<br/>Semgrep + Bandit}
-    SAST -- Hallazgos críticos --> SAST_FILTER[SECURITY FILTER: Gemini<br/>Discrimina falsos positivos]
-    SAST_FILTER -- Vulnerabilidad confirmada --> REPLAN_SEC
-    REPLAN_SEC -- Disponible --> NEW_EPOCH
-    REPLAN_SEC -- Agotado --> HALT_HUMAN
+    TESTING -- Passed --> SAST{SAST SCAN<br/>Semgrep + Bandit}
+    SAST -- Critical Findings --> SAST_FILTER[SECURITY FILTER: Gemini<br/>Filters false positives]
+    SAST_FILTER -- Confirmed Vulnerability --> REPLAN_SEC
+    REPLAN_SEC -- Available --> NEW_EPOCH
+    REPLAN_SEC -- Exhausted --> HALT_HUMAN
     
-    SAST -- Sin hallazgos --> LOGIC_AUDIT{LOGIC SECURITY AUDIT<br/>Gemini / GLM: Audita invariantes SEC}
-    LOGIC_AUDIT -- Error red / 429 --> HUMAN_REVIEW[HUMAN REVIEW<br/>Pausa segura sin gastar budget]
-    LOGIC_AUDIT -- Invariante violado --> REPLAN_SEC
+    SAST -- Clean --> LOGIC_AUDIT{LOGIC SECURITY AUDIT<br/>Gemini / GLM: Audits SEC invariants}
+    LOGIC_AUDIT -- Network error / 429 --> HUMAN_REVIEW[HUMAN REVIEW<br/>Safe pause without budget penalty]
+    LOGIC_AUDIT -- Invariant Violated --> REPLAN_SEC
     
-    LOGIC_AUDIT -- Aprobado --> AUTO_MERGE{AUTO MERGE<br/>merge_gate.py: Fast-Forward dev}
-    AUTO_MERGE -- Árbol sucio o divergente --> HALT_MERGE[HALT_HUMAN: Bloqueo seguro]
-    AUTO_MERGE -- Éxito FF --> COMPLETED([COMPLETED: Tarea Finalizada])
+    LOGIC_AUDIT -- Passed --> AUTO_MERGE{AUTO MERGE<br/>merge_gate.py: Fast-Forward into dev}
+    AUTO_MERGE -- Dirty / Diverged Tree --> HALT_MERGE[HALT_HUMAN: Safe lock]
+    AUTO_MERGE -- Success FF --> COMPLETED([COMPLETED: Task Finished])
     
-    HALT_MERGE -. Resolver externamente .-> RESUME[--resume-merge<br/>Recuperación atómica sin LLMs]
+    HALT_MERGE -. Resolve externally .-> RESUME[--resume-merge<br/>Atomic recovery without LLMs]
     RESUME --> AUTO_MERGE
 ```
 
 ---
 
-## 3. Componentes y Agentes
+## 3. Agent Roles and Models
 
-| Rol / Agente | Modelo Predeterminado | Proveedor | Responsabilidad |
+| Role | Default Model | Provider | Responsibility |
 | :--- | :--- | :--- | :--- |
-| **Architect** | `gemini-3.8-flash` | Google Gemini | Analiza requerimientos y formaliza especificaciones técnicas tabulares (`specs/TASK-XXX.md`). |
-| **Worker** | `deepseek-flash` | DeepSeek | Genera el código fuente y las pruebas unitarias aisladas en estricto cumplimiento de `RULES.md`. |
-| **Triage** | `gemini-3.5-flash-lite` | Google Gemini | Inspecciona fallos de pytest (`stdout`, `stderr`, stacktraces) y diagnostica la causa raíz estructurada. |
-| **Security Filter** | `gemini-3.5-flash-lite` | Google Gemini | Revisa hallazgos de herramientas SAST y filtra falsos positivos antes de detener el pipeline. |
-| **Logic Security Auditor** | `gemini-3.8-flash` / `glm-5.3` | Gemini / Zhipu GLM | Compara el diff semántico contra los invariantes `SEC-XX` de la especificación técnica. |
+| **Architect** | `gemini-3.8-flash` | Google Gemini | Analyzes requirements and drafts formal tabular specifications (`specs/TASK-XXX.md`). |
+| **Worker** | `deepseek-flash` | DeepSeek | Implements source code and unit tests inside an isolated worktree under `RULES.md`. |
+| **Triage** | `gemini-3.5-flash-lite` | Google Gemini | Analyzes test failures (`stdout`, `stderr`, stack traces) and outputs structured diagnosis. |
+| **Security Filter** | `gemini-3.5-flash-lite` | Google Gemini | Reviews raw SAST alerts to differentiate true positives from false alarms. |
+| **Logic Security Auditor** | `gemini-3.8-flash` / `glm-5.3` | Gemini / Zhipu GLM | Verifies that semantic code diffs satisfy all security invariants (`SEC-XX`). |
 
 ---
 
-## 4. Las Seis Compuertas Deterministas (Deterministic Gates)
+## 4. The Six Deterministic Verification Gates
 
 1. **`SPEC_GATE` ([`scripts/spec_gate.py`](scripts/spec_gate.py)):**
-   Valida que la especificación técnica contenga objetivos claros, tabla de invariantes de seguridad/lógica y fronteras explícitas de archivos permitidos y prohibidos.
+   Validates required sections, unambiguous Acceptance Criteria (`[AC-xx]`), Security Invariants (`[SEC-xx]`), and 1:1 traceability in the Test Matrix before any code is written.
 2. **`DIFF_GATE` ([`scripts/diff_gate.py`](scripts/diff_gate.py)):**
-   Inspecciona `git diff base...HEAD` en el worktree antes de ejecutar cualquier código. Si el Worker tocó un archivo no autorizado (ej. `pyproject.toml`, `.env`, configuración), la compuerta aborta de inmediato.
+   Inspects `git diff base...HEAD` inside the worktree. Strictly enforces:
+   $$\text{modified\_files} \subseteq \text{allowed\_files}$$
+   $$\text{forbidden\_files} \cap \text{modified\_files} = \emptyset$$
+   Blocks edits to root infrastructure files (`pyproject.toml`, `.env*`, `RULES.md`, `orchestrator/`, `scripts/`).
 3. **`TEST_RUNNER` ([`scripts/test_runner.py`](scripts/test_runner.py)):**
-   Ejecuta `pytest` exigiendo un umbral mínimo de cobertura de código (por defecto $\ge 85\%$). Si los tests fallan o la cobertura es insuficiente, se bloquea el paso al escaneo de seguridad.
+   Executes `pytest` with coverage measurement. Demands $\ge 85\%$ line coverage on task files. Fails if assertions fail or coverage is deficient.
 4. **`SAST_SCAN` ([`scripts/sast_runner.py`](scripts/sast_runner.py)):**
-   Ejecuta análisis estático de vulnerabilidades mediante **Semgrep** (`p/python`, `p/owasp-top-ten`, `p/cwe-top-25`) y **Bandit**.
+   Runs static application security testing using **Semgrep** (`p/python`, `p/owasp-top-ten`, `p/cwe-top-25`) and **Bandit** (`-lll -iii`).
 5. **`LOGIC_AUDIT` ([`adapters/gemini_adapter.py`](adapters/gemini_adapter.py) / [`adapters/glm_adapter.py`](adapters/glm_adapter.py)):**
-   Verifica semánticamente que los invariantes lógicos y de seguridad no hayan sido vulnerados por el diff propuesto.
+   A dedicated model audits the Git diff specifically against the task's stated security invariants.
 6. **`MERGE_GATE` ([`scripts/merge_gate.py`](scripts/merge_gate.py)):**
-   Verifica que el repositorio principal esté limpio (`git status --porcelain`) y que no haya divergencias con la rama base (`dev`), ejecutando exclusivamente fusiones atómicas Fast-Forward (`git merge --ff-only`).
+   Verifies that the target repository is clean (`git status --porcelain`) and that the task branch is an ancestor-compatible fast-forward merge target. Enforces `git merge --ff-only` exclusively.
 
 ---
 
-## 5. Control de Estados (FSM), Presupuestos y Circuit Breakers
+## 5. State Machine (FSM), Budgets, and Circuit Breakers
 
-El sistema está regulado por [`orchestrator/state_manager.py`](orchestrator/state_manager.py), que persiste el estado en `orchestrator/state/state_<TASK_ID>.json`:
+Task lifecycle is managed by [`orchestrator/state_manager.py`](orchestrator/state_manager.py), which persists state into `orchestrator/state/state_<TASK_ID>.json`:
 
-### Presupuestos de Ejecución (Execution Budgets)
-Definidos en [`orchestrator/config.json`](orchestrator/config.json):
-* `max_worker_per_epoch`: **2** intentos del Worker por época de resolución.
-* `max_cumulative_worker_runs`: **5** intentos acumulados máximos por tarea.
-* `max_logic_replans`: **2** replanificaciones ante fallos persistentes de pruebas.
-* `max_security_replans`: **1** replanificación ante vulnerabilidades confirmadas.
-* `max_spec_syntax_retries`: **1** reintento de sintaxis de especificación.
+### Formal FSM States
+```text
+INIT -> SPEC_DESIGN -> SPEC_GATE -> BUILDING -> DIFF_GATE -> TESTING ->
+TRIAGING -> SAST_SCAN -> SAST_FILTER -> LOGIC_AUDIT -> AUTO_MERGE
+```
+Terminal / suspension states: `COMPLETED`, `HALT_HUMAN`, `HUMAN_REVIEW`.
 
-### Circuit Breaker y HUMAN_REVIEW
-* **`CRASH_REPORT_<TASK_ID>.md`:** Si se agota cualquier presupuesto o se detecta una condición fatal, el Circuit Breaker detiene el proceso y genera un informe forense no destructivo.
-* **`HUMAN_REVIEW`:** Si un servicio de auditoría externo devuelve errores de red persistentes (HTTP 429 Too Many Requests o 503 Service Unavailable), el pipeline entra en pausa controlada **sin consumir presupuestos de Worker**.
-* **`--resume-merge`:** Permite recuperar una tarea autorizada que completó todas las compuertas pero se detuvo en `AUTO_MERGE` (por ejemplo, por tener archivos sin commitear en el árbol de trabajo). Realiza exclusivamente la fusión Fast-Forward sin invocar agentes, compuertas ni consumir presupuestos.
+### Execution Budgets
+Configured in [`orchestrator/config.json`](orchestrator/config.json):
+* `max_worker_per_epoch`: **2** local attempts by Worker per epoch.
+* `max_cumulative_worker_runs`: **5** total lifetime Worker runs per task.
+* `max_logic_replans`: **2** replanning attempts on persistent test failures.
+* `max_security_replans`: **1** replanning attempt on confirmed vulnerabilities.
+* `max_spec_syntax_retries`: **1** retry for specification syntax formatting.
+
+### Circuit Breakers and Human Oversight
+* **`CRASH_REPORT_<TASK_ID>.md`:** Triggered when any budget is exhausted or an unrecoverable failure occurs. Freezes worktree artifacts for inspection.
+* **`HUMAN_REVIEW`:** Triggered when external LLM endpoints return persistent network or rate limit errors (HTTP 429 or 503). Suspends execution in a safe state **without spending Worker attempts or replan budgets**.
+* **`--resume-merge`:** Safe recovery pathway for tasks that cleared every verification gate but halted at `AUTO_MERGE` (e.g., due to local uncommitted edits on `dev`). Performs a clean fast-forward merge without invoking agents, LLMs, or altering budget counters.
 
 ---
 
-## 6. Instalación y Requisitos
+## 6. Git Worktree Isolation
 
-### Requisitos del Sistema
+Rather than performing file operations in the main working tree:
+* Each task generates an isolated Git worktree at `.worktrees/wt_<TASK_ID>` linked to branch `task/<TASK_ID>`.
+* If a Worker introduces broken code, unformatted files, or gate violations, the main branch remains clean and untouched.
+* Only when all six gates report `PASS` is the worktree removed and the task branch fast-forward merged into `dev`.
+
+---
+
+## 7. Security Model
+
+* **Least Authority:** Workers can only touch files explicitly designated under `Allowed files` in the task specification.
+* **Protected Root Patterns:** Infrastructure files (`pyproject.toml`, `.env*`, `RULES.md`, `orchestrator/**`, `scripts/**`) cannot be modified by Workers.
+* **Credential Hygiene:** API keys are never passed as CLI arguments, logged to disk, or committed to Git. The `.gitignore` explicitly filters credentials, virtual environments, worktrees, and dynamic state.
+* **Deterministic SAST:** Security scanning occurs locally before code integration.
+
+---
+
+## 8. Installation and Setup
+
+### Prerequisites
 * **Python:** `>= 3.10`
 * **Git:** `>= 2.30`
 * **Semgrep:** `>= 1.0.0`
-* Compatible con Windows (PowerShell) y Linux / macOS.
+* Tested on Windows (PowerShell) and Linux / macOS.
 
-### Instalación
+### Installation
 
-```powershell
-# 1. Clonar el repositorio
-git clone <URL_DEL_REPOSITORIO>
-cd Agentes
+```bash
+# 1. Clone the repository
+git clone https://github.com/LE0ST/autonomous-multi-agent-software-factory.git
+cd autonomous-multi-agent-software-factory
 
-# 2. Crear y activar entorno virtual
+# 2. Create and activate a virtual environment
 python -m venv .venv
-.venv\Scripts\Activate.ps1   # En Windows PowerShell
-# source .venv/bin/activate  # En Linux / macOS
+# On Windows PowerShell:
+.venv\Scripts\Activate.ps1
+# On Linux / macOS:
+# source .venv/bin/activate
 
-# 3. Instalar el proyecto y dependencias mediante pyproject.toml
+# 3. Install dependencies and the package in editable mode
 pip install -e .
 ```
 
-### Configuración de Credenciales
-Copia `.env.example` como `.env`:
-```powershell
+### Credential Configuration
+Copy `.env.example` to `.env`:
+```bash
 cp .env.example .env
 ```
-Edita `.env` con tus claves de API:
+Add your API keys to `.env`:
 ```ini
-GEMINI_API_KEY=tu-clave-de-gemini
-DEEPSEEK_API_KEY=tu-clave-de-deepseek
-GLM_API_KEY=tu-clave-de-glm  # Opcional
+GEMINI_API_KEY=your-gemini-api-key
+DEEPSEEK_API_KEY=your-deepseek-api-key
+GLM_API_KEY=your-glm-api-key  # Optional
 ```
 
 ---
 
-## 7. Guía de Uso
+## 9. Usage
 
-### Ejecutar una Tarea Completa
-Para ejecutar una tarea especificada (ej. `specs/TASK-002.md`):
-```powershell
+### Run a Task Pipeline
+To execute a task defined in a specification (e.g. `specs/TASK-002.md`):
+```bash
 python orchestrator.py TASK-002
 ```
 
-### Modo Simulación (Dry-Run sin consumo de API)
-Permite validar compuertas, creación de ramas y flujo de integración sin realizar llamadas a LLMs:
-```powershell
+### Dry-Run / Simulation Mode
+Validates gates, branching, and worktree logic without spending API tokens:
+```bash
 python orchestrator.py TASK-001 --simulate
 ```
 
-### Recuperación Determinista de Merge (`--resume-merge`)
-Si una tarea superó todas las compuertas pero se detuvo en la fusión (ej. por cambios locales en `dev`):
-```powershell
+### Deterministic Merge Recovery (`--resume-merge`)
+If a task previously passed all verification gates but halted during merge due to uncommitted working tree changes:
+```bash
 python orchestrator.py --resume-merge TASK-002
 ```
 
-### Ejecutar la Suite de Pruebas
-```powershell
-python -m pytest -v tests/
+### Run the Test Suite
+```bash
+python -m pytest tests/
 ```
-*(Actualmente 61 pruebas unitarias y de integración pasan al 100%).*
+Currently, **62 unit and integration tests pass** out-of-the-box without requiring external network access or API credentials.
 
 ---
 
-## 8. Caso de Estudio: `TASK-002` (Password Validator)
+## 10. Case Studies: `TASK-001` and `TASK-002`
 
-El repositorio incluye la ejecución y validación completa de dos tareas reales integradas en `dev`:
+The repository contains the complete development and verification history for two integrated production tasks:
 
-1. **`TASK-001`**: Módulo de validación de tokens JWT (`src/auth/token_validator.py`).
-2. **`TASK-002`**: Validador seguro de contraseñas (`src/auth/password_validator.py`):
-   * **Especificación:** [`specs/TASK-002.md`](specs/TASK-002.md) definió invariantes como longitud mínima, presencia de mayúsculas, minúsculas, números y caracteres especiales, así como rechazo de palabras comunes.
-   * **Worker:** Generó la implementación y 24 pruebas unitarias exhaustivas en [`tests/test_password_validator.py`](tests/test_password_validator.py).
-   * **Compuertas:** Superó `SPEC_GATE`, `DIFF_GATE`, `TESTING` (cobertura 100%), `SAST_SCAN` y `LOGIC_AUDIT`.
-   * **Integración:** Integrado en `dev` mediante Fast-Forward merge verificable en el historial de Git.
+1. **`TASK-001` — Token Validator (`src/auth/token_validator.py`):**
+   * **Specification:** [`specs/TASK-001.md`](specs/TASK-001.md) defined token verification using constant-time digest comparison (`hmac.compare_digest`), rejecting empty or invalid inputs.
+   * **Worker:** Generated the implementation and unit tests in [`tests/test_token_validator.py`](tests/test_token_validator.py).
+   * **Gates:** Passed all six deterministic gates and fast-forward merged into `dev`.
+
+2. **`TASK-002` — Secure Password Validator (`src/auth/password_validator.py`):**
+   * **Specification:** [`specs/TASK-002.md`](specs/TASK-002.md) defined formal acceptance criteria `[AC-01]` and `[AC-02]` (minimum length of 8 characters, non-empty, requiring at least one letter and at least one digit) and security invariants `[SEC-01]` and `[SEC-02]` (passwords must never be written to disk, logged, printed to stdout/stderr, or hardcoded).
+   * **Worker:** Generated the pure helper function `validate_password(password: str) -> bool` and 24 unit tests in [`tests/test_password_validator.py`](tests/test_password_validator.py).
+   * **Gates:** Passed `SPEC_GATE`, `DIFF_GATE`, `TESTING` (100% code coverage), `SAST_SCAN`, and `LOGIC_AUDIT`.
+   * **Recovery:** Successfully integrated into `dev` using `--resume-merge` after resolving divergence, verifiable in the Git commit history.
 
 ---
 
-## 9. Estructura del Repositorio
+## 11. Repository Structure
 
 ```text
 .
-├── .env.example                # Plantilla de credenciales segura
-├── .gitignore                  # Reglas de exclusión de Git
-├── .semgrepignore              # Reglas de exclusión para SAST
-├── CONTRIBUTING.md             # Guía de contribución y buenas prácticas
-├── LICENSE                     # Licencia MIT
-├── pyproject.toml              # Metadatos del paquete y dependencias
-├── README.md                   # Documentación principal del sistema
-├── RULES.md                    # Reglas de gobernanza para el Worker
+├── .env.example                # Safe credentials template
+├── .gitignore                  # Git exclusion rules
+├── .semgrepignore              # SAST exclusion rules
+├── CONTRIBUTING.md             # Contribution guidelines
+├── LICENSE                     # MIT License
+├── pyproject.toml              # Packaging metadata and dependencies
+├── README.md                   # Primary English documentation
+├── README_ES.md                # Spanish documentation
+├── RULES.md                    # Worker governance directives
 │
-├── adapters/                   # Adaptadores de proveedores LLM
-│   ├── contracts.py            # Modelos Pydantic v2 de entrada/salida
-│   ├── deepseek_adapter.py     # Worker / Code Generator
+├── .github/workflows/          # Continuous integration
+│   └── ci.yml                  # GitHub Actions test workflow
+│
+├── adapters/                   # LLM provider adapters
+│   ├── contracts.py            # Pydantic v2 structured schemas
+│   ├── deepseek_adapter.py     # Worker / code generation
 │   ├── gemini_adapter.py       # Architect, Triage, Security Filter, Logic Security
-│   ├── glm_adapter.py          # Logic Security alternativo
-│   └── network_retry.py        # Resiliencia HTTP con backoff exponencial
+│   ├── glm_adapter.py          # Alternative Logic Security provider
+│   └── network_retry.py        # HTTP resilience with exponential backoff
 │
-├── orchestrator/               # Núcleo del orquestador y FSM
-│   ├── config.json             # Presupuestos, roles y umbrales
-│   ├── env_loader.py           # Cargador seguro de variables de entorno
-│   └── state_manager.py        # Máquina de estados finitos y persistencia
+├── orchestrator/               # Core orchestrator and FSM
+│   ├── config.json             # Budgets, roles, and thresholds
+│   ├── env_loader.py           # Environment variable loader
+│   └── state_manager.py        # Finite State Machine controller
 │
-├── scripts/                    # Compuertas deterministas de verificación
-│   ├── diff_gate.py            # Validación de fronteras de modificación
-│   ├── discovery.py            # Análisis de estructura del proyecto
-│   ├── merge_gate.py           # Fusión Fast-Forward atómica a dev
-│   ├── sast_runner.py          # Escáner de seguridad Semgrep / Bandit
-│   ├── spec_gate.py            # Validador sintáctico y de invariantes de SPEC
-│   ├── test_runner.py          # Ejecutor de pytest con cobertura >= 85%
-│   └── worktree_manager.py     # Gestor de aislamiento por Git Worktrees
+├── scripts/                    # Deterministic verification gates
+│   ├── diff_gate.py            # File boundary enforcement
+│   ├── discovery.py            # Repository structure analysis
+│   ├── merge_gate.py           # Atomic fast-forward merge gate
+│   ├── sast_runner.py          # Semgrep & Bandit security runner
+│   ├── spec_gate.py            # Specification contract validator
+│   ├── test_runner.py          # Pytest runner with coverage enforcement
+│   └── worktree_manager.py     # Git worktree isolation manager
 │
-├── specs/                      # Especificaciones de tareas
-│   ├── TASK-001.md             # Especificación de autenticación de tokens
-│   ├── TASK-002.md             # Especificación de validador de contraseñas
-│   └── TEMPLATE.md             # Plantilla canónica de especificaciones
+├── specs/                      # Task specifications
+│   ├── TASK-001.md             # Token validator specification
+│   ├── TASK-002.md             # Secure password validator specification
+│   └── TEMPLATE.md             # Canonical specification template
 │
-├── src/                        # Código productivo generado e integrado
+├── src/                        # Production code generated and integrated
 │   └── auth/
 │       ├── password_validator.py
 │       └── token_validator.py
 │
-└── tests/                      # Suite de pruebas automatizadas
+└── tests/                      # Automated test suite (62 tests)
     ├── test_deepseek_adapter.py
     ├── test_diff_gate.py
+    ├── test_e2e_dry_run.py
     ├── test_network_retry.py
     ├── test_password_validator.py
     ├── test_resume_merge.py
@@ -259,22 +300,22 @@ El repositorio incluye la ejecución y validación completa de dos tareas reales
 
 ---
 
-## 10. Limitaciones Actuales y Roadmap
+## 12. Current Limitations & Roadmap
 
-### Limitaciones Actuales
-* **Monolenguaje (Python):** Las compuertas de análisis estático y ejecución de pruebas están optimizadas actualmente para proyectos Python.
-* **Secuencia Lineal de Épocas:** Aunque el Worker ejecuta reintentos locales, el orquestador trabaja una sola tarea activa a la vez por repositorio.
-* **Modelos Propietarios:** Requiere claves de API comerciales (Google Gemini, DeepSeek o Zhipu GLM).
+### Current Limitations
+* **Single Language (Python):** SAST scanning and test runner gates are currently tailored for Python repositories.
+* **Single Task Sequential Execution:** Tasks are processed sequentially; concurrent multi-task pipelining is in development.
+* **Commercial APIs:** Requires commercial API keys (Google Gemini, DeepSeek, or Zhipu GLM) unless running in `--simulate` mode.
 
 ### Roadmap
-- [ ] Soporte para modelos locales mediante Ollama / vLLM (reducción a costo cero de tokens para Worker y Triage).
-- [ ] Soporte políglota para compuertas de pruebas (Node.js/TypeScript con Jest/Vitest, Rust con `cargo test`).
-- [ ] Paralelización concurrente de múltiples tareas en worktrees independientes.
-- [ ] Generación automática de especificaciones arquitectónicas a partir de issues de GitHub.
-- [ ] Dashboard interactivo de telemetría de estados y costos de tokens por tarea.
+- [ ] Local model support via Ollama / vLLM (zero token cost for Worker and Triage).
+- [ ] Polyglot test gate support (Node.js/TypeScript with Vitest, Rust with `cargo test`).
+- [ ] Concurrent multi-task scheduling across independent worktrees.
+- [ ] Automated specification generation directly from GitHub Issues.
+- [ ] Telemetry dashboard visualizing state transitions, token spend, and gate outcomes.
 
 ---
 
-## 11. Licencia
+## 13. License
 
-Este proyecto se distribuye bajo la licencia **MIT**. Consulta el archivo [`LICENSE`](LICENSE) para más detalles.
+Distributed under the **MIT License**. See [`LICENSE`](LICENSE) for details.
