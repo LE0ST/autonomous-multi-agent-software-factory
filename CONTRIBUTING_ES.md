@@ -1,4 +1,4 @@
-﻿# Guía de Contribución — Autonomous Multi-Agent Software Factory
+# Guía de Contribución — Autonomous Multi-Agent Software Factory
 
 [English](CONTRIBUTING.md) | Español
 
@@ -52,30 +52,31 @@ Configura tus claves para los proveedores de modelos que desees utilizar:
 * `GEMINI_API_KEY`: Requerida para Architect, Triage, Security Filter y Logic Security.
 * `DEEPSEEK_API_KEY`: Requerida para el Worker (generador de código y tests).
 * `GLM_API_KEY`: Opcional para Logic Security con Zhipu GLM.
+* `DASHSCOPE_API_KEY`: Opcional para fallback de Logic Security con Qwen (`qwen3.8-flash`).
 
 > [!CAUTION]
 > **Nunca comittees ni envíes archivos `.env` o credenciales reales.** El repositorio ignora activamente `.env` y archivos de credenciales. Cualquier contribución que incluya secretos en texto plano será rechazada de inmediato.
 
 ---
 
-## 3. Flujo de Trabajo y Ramas (Branching)
+## 3. Estrategia de Ramas y Flujo de Trabajo
 
-* **Rama base de integración:** `dev`. Todo merge se realiza exclusivamente mediante Fast-Forward (`--ff-only`).
-* **Ramas de tareas:** `task/TASK-XXX`.
-* **Aislamiento:** El orquestador opera en Git worktrees temporales ubicados en `.worktrees/wt_TASK-XXX` para garantizar que la copia de trabajo principal permanezca intacta durante la generación y prueba de código.
-* **Recuperación Determinista:** Si una tarea autorizada se suspende durante `AUTO_MERGE` (árbol sucio) o `LOGIC_AUDIT` (límite de tasa 429/503), se emplean respectivamente las rutas de recuperación `--resume-merge` y `--resume-audit` sin eludir compuertas ni realizar rebases automáticos ante divergencias.
+* **Rama de Integración Base:** `dev`. Toda integración de código se realiza exclusivamente mediante avance rápido Fast-Forward (`--ff-only`).
+* **Ramas de Tarea:** `task/TASK-XXX`.
+* **Aislamiento por Worktrees:** El orquestador opera dentro de Git worktrees aislados en `.worktrees/wt_TASK-XXX`, garantizando que la copia de trabajo principal permanezca intacta durante la generación de código, ejecución de pruebas y análisis estático.
+* **Recuperación Determinista:** Si una tarea autorizada se detiene en `AUTO_MERGE` (árbol sucio) o `LOGIC_AUDIT` (límites transitorios HTTP 429/503), utiliza los comandos autorizados `--resume-merge` o `--resume-audit` respectivamente. Ninguna de estas vías elude las compuertas de verificación ni realiza rebases automáticos si se detecta divergencia de ramas.
 
 ---
 
 ## 4. Estructura de Tareas y Especificaciones
 
-Toda nueva tarea debe documentarse en `specs/TASK-XXX.md` utilizando como base la plantilla [`specs/TEMPLATE.md`](specs/TEMPLATE.md):
+Toda nueva tarea debe formalizarse en `specs/TASK-XXX.md` utilizando [`specs/TEMPLATE.md`](specs/TEMPLATE.md) como plantilla canónica:
 
-* **Objetivo claro y conciso.**
-* **Tabla de Invariantes de Seguridad / Lógica (`SEC-XX` / `LOG-XX`):** Reglas inviolables que deben verificarse tanto en tests unitarios como en la auditoría de seguridad lógica.
-* **Archivos permitidos:** Lista explícita de rutas que el Worker tiene autorización de crear o modificar.
-* **Archivos prohibidos:** Rutas protegidas del repositorio (raíz, configuración, orquestador, scripts de compuertas).
-* **Criterio de Cobertura:** Umbral mínimo de cobertura de código (por defecto $\ge 85\%$).
+* **Objetivo claro y conciso de la tarea.**
+* **Tabla de Invariantes Lógicos y de Seguridad (`SEC-XX` / `LOG-XX`):** Reglas inviolables que deben verificarse tanto mediante pruebas unitarias como por la auditoría semántica de seguridad lógica.
+* **Archivos Permitidos (Allowed Files):** Lista blanca explícita de rutas que el Worker está autorizado a crear o modificar.
+* **Archivos Prohibidos (Forbidden Files):** Rutas protegidas de la infraestructura del repositorio (archivos de raíz, configuración, núcleo del orquestador, compuertas de verificación).
+* **Umbral de Cobertura:** Porcentaje mínimo de cobertura de líneas exigido (por defecto $\ge 85\%$).
 
 ---
 
@@ -91,7 +92,7 @@ git diff --check
 python -m pytest -v tests/
 ```
 
-Las 115 pruebas existentes deben pasar al 100%. No está permitido comentar, eludir ni eliminar pruebas existentes para facilitar aprobaciones.
+Las 202 pruebas existentes deben pasar al 100%. No está permitido comentar, eludir ni eliminar pruebas existentes para facilitar aprobaciones.
 
 ---
 

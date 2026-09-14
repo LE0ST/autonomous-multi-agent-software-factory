@@ -63,9 +63,11 @@ flowchart TD
     REPLAN_SEC -- Available --> NEW_EPOCH
     REPLAN_SEC -- Exhausted --> HALT_HUMAN
     
-    SAST -- Clean --> LOGIC_AUDIT{LOGIC SECURITY AUDIT<br/>Gemini / GLM: Audits SEC invariants}
-    LOGIC_AUDIT -- Network error / 429 --> HUMAN_REVIEW[HUMAN REVIEW<br/>Safe pause without budget penalty]
-    LOGIC_AUDIT -- Invariant Violated --> REPLAN_SEC
+    SAST -- Clean --> LOGIC_AUDIT{LOGIC SECURITY AUDIT<br/>Multi-provider fallback chain}
+    LOGIC_AUDIT -- Availability failure (429/503) --> FALLBACK{Fallback candidate?<br/>Gemini -> DeepSeek -> Qwen -> Gemini 3.6}
+    FALLBACK -- Next candidate available --> LOGIC_AUDIT
+    FALLBACK -- Exhausted --> HUMAN_REVIEW[HUMAN REVIEW<br/>Safe pause without budget penalty]
+    LOGIC_AUDIT -- Invariant Violated (FAIL) --> REPLAN_SEC
     
     HUMAN_REVIEW -. --resume-audit .-> LOGIC_AUDIT
 
@@ -87,7 +89,7 @@ flowchart TD
 | **Worker** | `deepseek-flash` | DeepSeek | Implements source code and unit tests inside an isolated worktree under `RULES.md`. |
 | **Triage** | `gemini-3.5-flash-lite` | Google Gemini | Analyzes test failures (`stdout`, `stderr`, stack traces) and outputs structured diagnosis. |
 | **Security Filter** | `gemini-3.5-flash-lite` | Google Gemini | Reviews raw SAST alerts to differentiate true positives from false alarms. |
-| **Logic Security Auditor** | `gemini-3.8-flash` / `glm-5.3` | Gemini / Zhipu GLM | Verifies that semantic code diffs satisfy all security invariants (`SEC-XX`). |
+| **Logic Security Auditor** | `gemini-3.8-flash` (Primary)<br/>*Fallbacks:* `deepseek-flash`, `qwen3.8-flash`, `gemini-3.6-flash` (plus `glm-5.3` support) | Google Gemini, DeepSeek, Qwen / DashScope, Zhipu GLM | Verifies that semantic code diffs satisfy all security invariants (`SEC-XX`) under a deterministic, fail-closed multi-provider fallback policy. |
 
 ---
 
@@ -104,8 +106,8 @@ flowchart TD
    Executes `pytest` with coverage measurement. Demands $\ge 85\%$ line coverage on task files. Fails if assertions fail or coverage is deficient.
 4. **`SAST_SCAN` ([`scripts/sast_runner.py`](scripts/sast_runner.py)):**
    Runs static application security testing using **Semgrep** (`p/python`, `p/owasp-top-ten`, `p/cwe-top-25`) and **Bandit** (`-lll -iii`).
-5. **`LOGIC_AUDIT` ([`adapters/gemini_adapter.py`](adapters/gemini_adapter.py) / [`adapters/glm_adapter.py`](adapters/glm_adapter.py)):**
-   A dedicated model audits the Git diff specifically against the task's stated security invariants.
+5. **`LOGIC_AUDIT` ([`orchestrator.py`](orchestrator.py), [`adapters/`](adapters/)):**
+   An independent LLM auditor verifies that the semantic Git diff strictly satisfies all stated security invariants (`[SEC-xx]`). Protected by a deterministic multi-provider fallback chain (`gemini-3.8-flash` $\to$ `deepseek-flash` $\to$ `qwen3.8-flash` $\to$ `gemini-3.6-flash`) activating strictly on provider availability failures (HTTP 429/503), strictly rejecting model shopping on semantic `FAIL`.
 6. **`MERGE_GATE` ([`scripts/merge_gate.py`](scripts/merge_gate.py)):**
    Verifies that the target repository is clean (`git status --porcelain`) and that the task branch is an ancestor-compatible fast-forward merge target. Enforces `git merge --ff-only` exclusively.
 
@@ -133,6 +135,23 @@ Configured in [`orchestrator/config.json`](orchestrator/config.json):
 * `max_logic_replans`: **2** replanning attempts on persistent test failures.
 * `max_security_replans`: **1** replanning attempt on confirmed vulnerabilities.
 * `max_spec_syntax_retries`: **1** retry for specification syntax formatting.
+
+### Deterministic Multi-Provider Fallback for LOGIC_AUDIT
+To ensure maximum availability against upstream API rate limits (HTTP 429) and transport outages (HTTP 502/503/504) without sacrificing security guarantees, `LOGIC_AUDIT` enforces a deterministic, fail-closed multi-provider fallback policy configured in [`orchestrator/config.json`](orchestrator/config.json):
+
+1. **Primary Model:** `gemini` (`gemini-3.8-flash`)
+2. **Fallback Candidate 1:** `deepseek` (`deepseek-flash`)
+3. **Fallback Candidate 2:** `qwen` (`qwen3.8-flash`) via DashScope OpenAI-compatible API
+4. **Fallback Candidate 3:** `gemini` (`gemini-3.6-flash`)
+*(Note: Full adapter support is also implemented for Zhipu GLM via `GLMAdapter`).*
+
+**Strict Fallback Semantics:**
+* **Availability Failures Only:** Fallback triggers exclusively on transport-level network errors and provider unavailability (HTTP 429 Too Many Requests, HTTP 502/503/504, connection timeouts, socket aborts) after per-provider retries with exponential backoff (`@retry_with_backoff`) are exhausted.
+* **Semantic `FAIL` Never Triggers Fallback (No Model Shopping):** If any candidate model successfully connects and evaluates that a security invariant has been violated (`FAIL`), the audit verdict is final. No further fallback models are queried. The failure immediately consumes a security replan budget and routes back to Triage and Worker.
+* **Stop at First Verdict:** The pipeline halts at the first model that successfully returns `PASS`.
+* **Safe Halt on Ambiguity or Exhaustion:** If a model returns an ambiguous verdict (`UNCERTAIN`) or malformed JSON, execution transitions safely to `HUMAN_REVIEW` without trying subsequent models. If all candidates in the fallback chain fail due to network availability, execution pauses safely in `HUMAN_REVIEW`.
+* **Zero Budget Consumption on Fallbacks:** Switching between fallback models due to transport/availability failures does **not** consume Worker attempts, logic replans, or security replans. The epoch counter is untouched.
+* **Structured State Ledger:** The model and provider that successfully performed the audit are deterministically recorded under `audit_model_used: {"provider": "<provider>", "model": "<model>"}` in `state_<TASK_ID>.json` without exposing credentials.
 
 ### Circuit Breakers and Human Oversight
 * **`CRASH_REPORT_<TASK_ID>.md`:** Triggered when any budget is exhausted or an unrecoverable failure occurs. Freezes worktree artifacts for inspection.
@@ -195,7 +214,8 @@ Add your API keys to `.env`:
 ```ini
 GEMINI_API_KEY=your-gemini-api-key
 DEEPSEEK_API_KEY=your-deepseek-api-key
-GLM_API_KEY=your-glm-api-key  # Optional
+GLM_API_KEY=your-glm-api-key              # Optional for Zhipu GLM
+DASHSCOPE_API_KEY=your-dashscope-api-key  # Optional for Qwen fallback (qwen3.8-flash)
 ```
 
 ---
@@ -342,13 +362,13 @@ python orchestrator.py TASK-001 --simulate
 ```bash
 python -m pytest -v tests/
 ```
-All unit and integration tests run locally without requiring external network access or API credentials.
+The complete test suite (202 unit and integration tests) runs locally without requiring external network access or API credentials.
 
 ---
 
-## 10. Case Studies: `TASK-001`, `TASK-002`, `TASK-003`, and `TASK-004`
+## 10. Case Studies: `TASK-001`, `TASK-002`, `TASK-003`, `TASK-004`, and `TASK-005`
 
-The repository contains the complete development and verification history for four integrated production tasks:
+The repository contains the complete development and verification history for five integrated production tasks:
 
 1. **`TASK-001` — Token Validator (`src/auth/token_validator.py`):**
    * **Specification:** [`specs/TASK-001.md`](specs/TASK-001.md) defined token verification using constant-time digest comparison (`hmac.compare_digest`), rejecting empty or invalid inputs.
@@ -372,6 +392,12 @@ The repository contains the complete development and verification history for fo
    * **Worker Attempt 2:** Guided by the structured Triage diagnosis, Worker attempt 2 corrected the concurrency handling and internal locking.
    * **Gates & Suspension:** Attempt 2 passed `DIFF_GATE`, `TESTING` (100% code coverage across 19 unit tests in [`tests/test_ttl_cache.py`](tests/test_ttl_cache.py)), and `SAST_SCAN` (zero findings in Semgrep and Bandit). At `LOGIC_AUDIT`, an upstream API rate limit (HTTP 429) was encountered; the pipeline safely transitioned to `HUMAN_REVIEW` without penalizing Worker replan budgets.
    * **Recovery & Integration:** Once the provider rate limit cleared, recovery was executed via `--resume-audit TASK-004`. The audit passed, the worktree was cleanly detached, and the task completed through `AUTO_MERGE -> COMPLETED` via Fast-Forward merge into `dev`.
+
+5. **`TASK-005` — Multi-Tenant Authorization Policy Engine (`src/security/authorization_policy.py`):**
+   * **Specification:** [`specs/TASK-005.md`](specs/TASK-005.md) defined a stateless, deny-by-default authorization policy class `AuthorizationPolicy` with `is_allowed(subject_tenant: str, resource_tenant: str, roles: set[str], action: str) -> bool` (`[AC-01]`, `[AC-02]`). Acceptance criteria mandated default deny (`[AC-03]`), strict tenant isolation where access is permitted only when `subject_tenant == resource_tenant` across all roles including `admin` (`[AC-04]`, `[AC-05]`), granular role permissions (`viewer`: `read`; `editor`: `read`, `write`; `admin`: `read`, `write`, `delete`) (`[AC-06]`), and strict denial on unknown roles, unknown actions, or empty role sets (`[AC-07]` through `[AC-10]`). Security invariants mandated total prohibition of cross-tenant access (`[SEC-01]`), fail-closed semantics on missing/malformed/unknown inputs (`[SEC-02]`), zero hidden bypasses or admin tenant overrides (`[SEC-03]`), non-emission of tenant IDs, roles, and decisions to disk/logs/stdout/stderr (`[SEC-04]`), immutable stateless execution with no mutable global state (`[SEC-05]`), and zero dynamic execution (`eval`, `exec`, subprocesses, network, or external persistence) (`[SEC-06]`).
+   * **Worker:** In Epoch 1 attempt 1, the Worker implemented `AuthorizationPolicy` in [`src/security/authorization_policy.py`](src/security/authorization_policy.py) and 70 comprehensive unit tests in [`tests/test_authorization_policy.py`](tests/test_authorization_policy.py).
+   * **Gates & Suspension:** Passed `SPEC_GATE`, `DIFF_GATE`, `TESTING` (100% code coverage across all 70 unit tests), and `SAST_SCAN` (zero findings in Semgrep and Bandit). At `LOGIC_AUDIT`, an upstream API availability failure occurred (persistent HTTP 503 Service Unavailable). The pipeline safely transitioned to `HUMAN_REVIEW` without consuming Worker attempts or replan budgets.
+   * **Reconciliation & Integration:** After resolving Git divergence against `dev` where independent updates had been integrated, recovery was executed via `--resume-audit TASK-005`. The successful final audit was performed by `gemini:gemini-3.8-flash`. The worktree was cleanly detached and fast-forward merged into `dev` (`AUTO_MERGE -> COMPLETED`).
 
 ---
 
@@ -399,6 +425,7 @@ The repository contains the complete development and verification history for fo
 │   ├── gemini_adapter.py       # Architect, Triage, Security Filter, Logic Security
 │   ├── glm_adapter.py          # Alternative Logic Security provider
 │   ├── network_retry.py        # HTTP resilience with exponential backoff
+│   ├── qwen_adapter.py         # DashScope / Qwen Logic Security fallback
 │   └── sanitizer.py            # Secret redaction and credential hygiene
 │
 ├── orchestrator/               # Core orchestrator and FSM
@@ -420,6 +447,7 @@ The repository contains the complete development and verification history for fo
 │   ├── TASK-002.md             # Secure password validator specification
 │   ├── TASK-003.md             # In-memory rate limiter specification
 │   ├── TASK-004.md             # Thread-safe TTL/LRU cache specification
+│   ├── TASK-005.md             # Multi-tenant authorization policy specification
 │   └── TEMPLATE.md             # Canonical specification template
 │
 ├── src/                        # Production code generated and integrated
@@ -429,9 +457,12 @@ The repository contains the complete development and verification history for fo
 │   ├── cache/
 │   │   └── ttl_cache.py
 │   └── security/
+│       ├── authorization_policy.py
 │       └── rate_limiter.py
 │
-└── tests/                      # Automated test suite
+└── tests/                      # Automated test suite (202 tests)
+    ├── test_audit_fallback.py
+    ├── test_authorization_policy.py
     ├── test_deepseek_adapter.py
     ├── test_diff_gate.py
     ├── test_e2e_dry_run.py

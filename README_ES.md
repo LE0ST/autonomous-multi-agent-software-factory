@@ -63,9 +63,11 @@ flowchart TD
     REPLAN_SEC -- Disponible --> NEW_EPOCH
     REPLAN_SEC -- Agotado --> HALT_HUMAN
 
-    SAST -- Sin hallazgos --> LOGIC_AUDIT{LOGIC SECURITY AUDIT<br/>Gemini / GLM: Audita invariantes SEC}
-    LOGIC_AUDIT -- Error red / 429 --> HUMAN_REVIEW[HUMAN REVIEW<br/>Pausa segura sin gastar budget]
-    LOGIC_AUDIT -- Invariante violado --> REPLAN_SEC
+    SAST -- Sin hallazgos --> LOGIC_AUDIT{LOGIC SECURITY AUDIT<br/>Cadena de fallback multi-proveedor}
+    LOGIC_AUDIT -- Falla de disponibilidad (429/503) --> FALLBACK{¿Siguiente candidato?<br/>Gemini -> DeepSeek -> Qwen -> Gemini 3.6}
+    FALLBACK -- Candidato disponible --> LOGIC_AUDIT
+    FALLBACK -- Agotados --> HUMAN_REVIEW[HUMAN REVIEW<br/>Pausa segura sin gastar budget]
+    LOGIC_AUDIT -- Invariante violado (FAIL) --> REPLAN_SEC
 
     HUMAN_REVIEW -. --resume-audit .-> LOGIC_AUDIT
 
@@ -87,7 +89,7 @@ flowchart TD
 | **Worker** | `deepseek-flash` | DeepSeek | Genera el código fuente y las pruebas unitarias aisladas en estricto cumplimiento de `RULES.md`. |
 | **Triage** | `gemini-3.5-flash-lite` | Google Gemini | Inspecciona fallos de pytest (`stdout`, `stderr`, stacktraces) y diagnostica la causa raíz estructurada. |
 | **Security Filter** | `gemini-3.5-flash-lite` | Google Gemini | Revisa hallazgos de herramientas SAST y filtra falsos positivos antes de detener el pipeline. |
-| **Logic Security Auditor** | `gemini-3.8-flash` / `glm-5.3` | Gemini / Zhipu GLM | Compara el diff semántico contra los invariantes `SEC-XX` de la especificación técnica. |
+| **Logic Security Auditor** | `gemini-3.8-flash` (Primario)<br/>*Fallbacks:* `deepseek-flash`, `qwen3.8-flash`, `gemini-3.6-flash` (soporte `glm-5.3`) | Google Gemini, DeepSeek, Qwen / DashScope, Zhipu GLM | Audita semánticamente que el diff cumpla todos los invariantes (`[SEC-xx]`) bajo una política determinista y fail-closed de fallback multi-proveedor. |
 
 ---
 
@@ -104,8 +106,8 @@ flowchart TD
    Ejecuta `pytest` exigiendo un umbral mínimo de cobertura de código (por defecto $\ge 85\%$). Si los tests fallan o la cobertura es insuficiente, se bloquea el paso al escaneo de seguridad.
 4. **`SAST_SCAN` ([`scripts/sast_runner.py`](scripts/sast_runner.py)):**
    Ejecuta análisis estático de vulnerabilidades mediante **Semgrep** (`p/python`, `p/owasp-top-ten`, `p/cwe-top-25`) y **Bandit**.
-5. **`LOGIC_AUDIT` ([`adapters/gemini_adapter.py`](adapters/gemini_adapter.py) / [`adapters/glm_adapter.py`](adapters/glm_adapter.py)):**
-   Verifica semánticamente que los invariantes lógicos y de seguridad no hayan sido vulnerados por el diff propuesto.
+5. **`LOGIC_AUDIT` ([`orchestrator.py`](orchestrator.py), [`adapters/`](adapters/)):**
+   Verifica semánticamente que los invariantes lógicos y de seguridad (`[SEC-xx]`) no hayan sido vulnerados. Incorpora una cadena determinista de fallback multi-proveedor (`gemini-3.8-flash` $\to$ `deepseek-flash` $\to$ `qwen3.8-flash` $\to$ `gemini-3.6-flash`) activa únicamente ante fallos de disponibilidad (HTTP 429/503), prohibiendo estrictamente el model shopping ante veredictos semánticos de `FAIL`.
 6. **`MERGE_GATE` ([`scripts/merge_gate.py`](scripts/merge_gate.py)):**
    Verifica que el repositorio principal esté limpio (`git status --porcelain`) y que no haya divergencias con la rama base (`dev`), ejecutando exclusivamente fusiones atómicas Fast-Forward (`git merge --ff-only`).
 
@@ -133,6 +135,23 @@ Definidos en [`orchestrator/config.json`](orchestrator/config.json):
 * `max_logic_replans`: **2** replanificaciones ante fallos persistentes de pruebas.
 * `max_security_replans`: **1** replanificación ante vulnerabilidades confirmadas.
 * `max_spec_syntax_retries`: **1** reintento de sintaxis de especificación.
+
+### Fallback Multi-Proveedor Determinista para LOGIC_AUDIT
+Para garantizar la máxima disponibilidad operativa ante límites de tasa de API (HTTP 429) o caídas del servicio (HTTP 502/503/504) sin comprometer las garantías de seguridad, `LOGIC_AUDIT` implementa una política determinista y fail-closed de fallback multi-proveedor configurada en [`orchestrator/config.json`](orchestrator/config.json):
+
+1. **Modelo Primario:** `gemini` (`gemini-3.8-flash`)
+2. **Candidato Fallback 1:** `deepseek` (`deepseek-flash`)
+3. **Candidato Fallback 2:** `qwen` (`qwen3.8-flash`) mediante API compatible con OpenAI de DashScope
+4. **Candidato Fallback 3:** `gemini` (`gemini-3.6-flash`)
+*(Nota: Soporte completo por adaptador implementado también para Zhipu GLM vía `GLMAdapter`).*
+
+**Semántica Estricta de Fallback:**
+* **Activación Exclusiva por Fallas de Disponibilidad:** El fallback solo se activa ante errores de transporte de red e indisponibilidad del proveedor (HTTP 429 Too Many Requests, HTTP 502/503/504, caídas de conexión, timeouts de socket) tras agotar los reintentos locales con backoff exponencial (`@retry_with_backoff`).
+* **`FAIL` Semántico Nunca Activa Fallback (Sin Model Shopping):** Si un modelo evaluador se comunica con éxito y dictamina que el diff viola un invariante de seguridad (`FAIL`), el veredicto es definitivo. No se consulta a ningún modelo subsiguiente; el fallo consume de inmediato un presupuesto de replanificación de seguridad y retorna el control a Triage y Worker.
+* **Detención en el Primer Veredicto:** La ejecución del proceso de auditoría se detiene en el primer modelo que devuelva exitosamente `PASS`.
+* **Suspensión Segura ante Ambigüedad o Agotamiento:** Si un modelo devuelve un veredicto ambiguo (`UNCERTAIN`) o un JSON corrupto/malformado, la ejecución pasa de inmediato a `HUMAN_REVIEW` sin probar modelos adicionales. Si todos los modelos de la cadena de fallback sufren fallas de disponibilidad de red, la tarea pausa de forma segura en `HUMAN_REVIEW`.
+* **Cero Consumo de Presupuestos:** El cambio entre modelos ante fallas de transporte/red **no** consume intentos del Worker, replanificaciones lógicas ni replanificaciones de seguridad. El contador de épocas permanece intacto.
+* **Registro Estructurado en el Estado:** El proveedor y modelo que ejecutaron exitosamente la auditoría se registran de forma determinista bajo `audit_model_used: {"provider": "<provider>", "model": "<model>"}` en `state_<TASK_ID>.json` sin exponer credenciales.
 
 ### Circuit Breaker y HUMAN_REVIEW
 * **`CRASH_REPORT_<TASK_ID>.md`:** Si se agota cualquier presupuesto o se detecta una condición fatal, el Circuit Breaker detiene el proceso y genera un informe forense no destructivo.
@@ -175,7 +194,8 @@ Edita `.env` con tus claves de API:
 ```ini
 GEMINI_API_KEY=tu-clave-de-gemini
 DEEPSEEK_API_KEY=tu-clave-de-deepseek
-GLM_API_KEY=tu-clave-de-glm  # Opcional
+GLM_API_KEY=tu-clave-de-glm              # Opcional para Zhipu GLM
+DASHSCOPE_API_KEY=tu-clave-de-dashscope  # Opcional para fallback con Qwen (qwen3.8-flash)
 ```
 
 ---
@@ -322,13 +342,13 @@ python orchestrator.py TASK-001 --simulate
 ```powershell
 python -m pytest -v tests/
 ```
-Todas las pruebas unitarias y de integración se ejecutan localmente sin requerir acceso a redes externas ni claves de API.
+La suite completa de pruebas (202 pruebas unitarias y de integración) se ejecuta localmente sin requerir acceso a redes externas ni claves de API.
 
 ---
 
-## 8. Casos de Estudio: `TASK-001`, `TASK-002`, `TASK-003` y `TASK-004`
+## 8. Casos de Estudio: `TASK-001`, `TASK-002`, `TASK-003`, `TASK-004` y `TASK-005`
 
-El repositorio incluye la ejecución y validación completa de cuatro tareas reales integradas en `dev`:
+El repositorio incluye la ejecución y validación completa de cinco tareas reales integradas en `dev`:
 
 1. **`TASK-001`**: Módulo de validación de tokens (`src/auth/token_validator.py`):
    * **Especificación:** [`specs/TASK-001.md`](specs/TASK-001.md) definió validación de tokens con comparación segura (`hmac.compare_digest`), rechazando tokens vacíos o inválidos.
@@ -352,6 +372,12 @@ El repositorio incluye la ejecución y validación completa de cuatro tareas rea
    * **Worker Intento 2:** Con base en el diagnóstico estructurado de Triage, el intento 2 del Worker corrigió los mecanismos de sincronización y desalojo.
    * **Compuertas y Pausa:** El intento 2 superó `DIFF_GATE`, `TESTING` (100% de cobertura en 19 pruebas unitarias en [`tests/test_ttl_cache.py`](tests/test_ttl_cache.py)) y `SAST_SCAN` (cero vulnerabilidades en Semgrep y Bandit). En `LOGIC_AUDIT`, se produjo un error de límite de tasa del proveedor (HTTP 429); el pipeline pausó de manera segura en `HUMAN_REVIEW` sin consumir presupuestos de replanificación del Worker.
    * **Recuperación e Integración:** Tras superarse la saturación del servicio, se ejecutó la recuperación mediante `--resume-audit TASK-004`. La auditoría lógica aprobó el diff, el worktree fue desvinculado limpiamente y la tarea concluyó en `AUTO_MERGE -> COMPLETED` mediante fusión Fast-Forward hacia `dev`.
+
+5. **`TASK-005`**: Motor de políticas de autorización multi-inquilino (`src/security/authorization_policy.py`):
+   * **Especificación:** [`specs/TASK-005.md`](specs/TASK-005.md) definió una clase de políticas sin estado y con denegación por defecto `AuthorizationPolicy` con `is_allowed(subject_tenant: str, resource_tenant: str, roles: set[str], action: str) -> bool` (`[AC-01]`, `[AC-02]`). Exigió denegación por defecto (`[AC-03]`), aislamiento estricto de inquilinos donde el acceso solo se concede si `subject_tenant == resource_tenant` para todos los roles incluido `admin` (`[AC-04]`, `[AC-05]`), permisos por rol (`viewer`: `read`; `editor`: `read`, `write`; `admin`: `read`, `write`, `delete`) (`[AC-06]`), y denegación estricta ante roles o acciones desconocidos o conjuntos vacíos (`[AC-07]` a `[AC-10]`). Los invariantes de seguridad prohibieron el acceso entre inquilinos (`[SEC-01]`), exigieron comportamiento fail-closed ante entradas inválidas o malformadas (`[SEC-02]`), vetaron desvíos o comodines (`[SEC-03]`), prohibieron la emisión de datos a disco/logs/stdout/stderr (`[SEC-04]`), vedaron estado global mutable (`[SEC-05]`), y prohibieron ejecución dinámica (`eval`, `exec`, subprocesos o red) (`[SEC-06]`).
+   * **Worker:** En la Época 1 intento 1, el Worker generó la clase en [`src/security/authorization_policy.py`](src/security/authorization_policy.py) y 70 pruebas unitarias exhaustivas en [`tests/test_authorization_policy.py`](tests/test_authorization_policy.py).
+   * **Compuertas y Pausa:** Superó `SPEC_GATE`, `DIFF_GATE`, `TESTING` (100% de cobertura en 70 pruebas unitarias) y `SAST_SCAN` (cero vulnerabilidades). En `LOGIC_AUDIT`, una indisponibilidad de API del proveedor primario (HTTP 503 Service Unavailable) provocó la pausa en `HUMAN_REVIEW` sin consumir presupuestos de Worker ni replanificación.
+   * **Reconciliación e Integración:** Tras reconciliar la divergencia con `dev` por actualizaciones independientes, se ejecutó `--resume-audit TASK-005`. La auditoría final fue superada exitosamente mediante `gemini:gemini-3.8-flash`. El worktree fue liberado y la tarea se fusionó en avance rápido hacia `dev` (`AUTO_MERGE -> COMPLETED`).
 
 ---
 
@@ -379,6 +405,7 @@ El repositorio incluye la ejecución y validación completa de cuatro tareas rea
 │   ├── gemini_adapter.py       # Architect, Triage, Security Filter, Logic Security
 │   ├── glm_adapter.py          # Logic Security alternativo
 │   ├── network_retry.py        # Resiliencia HTTP con backoff exponencial
+│   ├── qwen_adapter.py         # Fallback de Logic Security con DashScope / Qwen
 │   └── sanitizer.py            # Redacción de secretos e higiene de credenciales
 │
 ├── orchestrator/               # Núcleo del orquestador y FSM
@@ -400,6 +427,7 @@ El repositorio incluye la ejecución y validación completa de cuatro tareas rea
 │   ├── TASK-002.md             # Especificación de validador de contraseñas
 │   ├── TASK-003.md             # Especificación de limitador de tasa en memoria
 │   ├── TASK-004.md             # Especificación de caché TTL/LRU con seguridad de hilos
+│   ├── TASK-005.md             # Especificación de política de autorización multi-inquilino
 │   └── TEMPLATE.md             # Plantilla canónica de especificaciones
 │
 ├── src/                        # Código productivo generado e integrado
@@ -409,9 +437,12 @@ El repositorio incluye la ejecución y validación completa de cuatro tareas rea
 │   ├── cache/
 │   │   └── ttl_cache.py
 │   └── security/
+│       ├── authorization_policy.py
 │       └── rate_limiter.py
 │
-└── tests/                      # Suite de pruebas automatizadas
+└── tests/                      # Suite de pruebas automatizadas (202 pruebas)
+    ├── test_audit_fallback.py
+    ├── test_authorization_policy.py
     ├── test_deepseek_adapter.py
     ├── test_diff_gate.py
     ├── test_e2e_dry_run.py

@@ -1,4 +1,4 @@
-﻿# Contribution Guidelines — Autonomous Multi-Agent Software Factory
+# Contribution Guidelines — Autonomous Multi-Agent Software Factory
 
 English | [Español](CONTRIBUTING_ES.md)
 
@@ -52,6 +52,7 @@ Configure your API keys for the model providers you intend to use:
 * `GEMINI_API_KEY`: Required for Architect, Triage, Security Filter, and Logic Security.
 * `DEEPSEEK_API_KEY`: Required for Worker (code generation and unit test drafting).
 * `GLM_API_KEY`: Optional for alternative Logic Security via Zhipu GLM.
+* `DASHSCOPE_API_KEY`: Optional for Qwen Logic Security fallback (`qwen3.8-flash`).
 
 > [!CAUTION]
 > **Never commit or push `.env` files or real credentials.** The repository actively ignores `.env` and credential files. Any pull request containing plain-text secrets will be rejected immediately.
@@ -91,7 +92,7 @@ git diff --check
 python -m pytest -v tests/
 ```
 
-The 115 existing tests must pass at 100%. Commenting out, skipping, or deleting existing tests to pass CI is strictly prohibited.
+The 202 existing tests must pass at 100%. Commenting out, skipping, or deleting existing tests to pass CI is strictly prohibited.
 
 ---
 
