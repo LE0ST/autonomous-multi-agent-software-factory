@@ -28,7 +28,21 @@
     },
     "logic_security": {
       "provider": "gemini",
-      "model": "gemini-3.8-flash"
+      "model": "gemini-3.8-flash",
+      "fallbacks": [
+        {
+          "provider": "deepseek",
+          "model": "deepseek-flash"
+        },
+        {
+          "provider": "qwen",
+          "model": "qwen3.8-flash"
+        },
+        {
+          "provider": "gemini",
+          "model": "gemini-3.6-flash"
+        }
+      ]
     }
   }
 }

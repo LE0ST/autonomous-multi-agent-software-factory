@@ -10,14 +10,14 @@ from typing import Any
 
 REDACTED_REPLACEMENT = "[REDACTED_API_KEY]"
 
-SECRET_ENV_KEYS = ("GEMINI_API_KEY", "DEEPSEEK_API_KEY", "GLM_API_KEY")
+SECRET_ENV_KEYS = ("GEMINI_API_KEY", "DEEPSEEK_API_KEY", "GLM_API_KEY", "DASHSCOPE_API_KEY")
 
 # Compiled regex patterns for defensive in-depth redaction:
 # 1. Query parameters in URLs: ?key=... or &key=...
 PATTERN_URL_KEY = re.compile(r"([?&]key=)[^&\s'\"`]+", re.IGNORECASE)
-# 2. HTTP headers: x-goog-api-key: ... (with or without quotes)
+# 2. HTTP headers: x-goog-api-key, api-key, dashscope-api-key, x-dashscope-...
 PATTERN_HEADER_GOOG = re.compile(
-    r"((?:['\"]?(?:x-goog-api-key|api-key)['\"]?)\s*[:=]\s*['\"]?)[^\s'\"`,]+",
+    r"((?:['\"]?(?:x-goog-api-key|api-key|dashscope-api-key|x-dashscope-[a-z0-9_\-]+)['\"]?)\s*[:=]\s*['\"]?)[^\s'\"`,]+",
     re.IGNORECASE
 )
 # 3. Authorization Bearer tokens: Bearer <token> (with or without quotes)

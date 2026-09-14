@@ -9,21 +9,24 @@ from orchestrator.state_manager import StateManager
 DUMMY_GEMINI_KEY = "dummy-fake-gemini-key-11111"
 DUMMY_DEEPSEEK_KEY = "dummy-fake-deepseek-key-22222"
 DUMMY_GLM_KEY = "dummy-fake-glm-key-33333"
+DUMMY_DASHSCOPE_KEY = "dummy-fake-dashscope-key-44444"
 
 def test_sanitize_secret_text_exact_env_values(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", DUMMY_GEMINI_KEY)
     monkeypatch.setenv("DEEPSEEK_API_KEY", DUMMY_DEEPSEEK_KEY)
     monkeypatch.setenv("GLM_API_KEY", DUMMY_GLM_KEY)
+    monkeypatch.setenv("DASHSCOPE_API_KEY", DUMMY_DASHSCOPE_KEY)
 
     raw_message = (
         f"Error connecting to Gemini with key {DUMMY_GEMINI_KEY}. "
-        f"Fallback DeepSeek {DUMMY_DEEPSEEK_KEY} and GLM {DUMMY_GLM_KEY} also reported error."
+        f"Fallback DeepSeek {DUMMY_DEEPSEEK_KEY}, GLM {DUMMY_GLM_KEY} and Qwen {DUMMY_DASHSCOPE_KEY} also reported error."
     )
     sanitized = sanitize_secret_text(raw_message)
 
     assert DUMMY_GEMINI_KEY not in sanitized
     assert DUMMY_DEEPSEEK_KEY not in sanitized
     assert DUMMY_GLM_KEY not in sanitized
+    assert DUMMY_DASHSCOPE_KEY not in sanitized
     assert REDACTED_REPLACEMENT in sanitized
 
 def test_sanitize_secret_text_url_query_parameter_pattern():
@@ -54,6 +57,7 @@ def test_crash_report_and_human_review_cannot_leak_keys(monkeypatch, tmp_path):
     monkeypatch.setenv("GEMINI_API_KEY", DUMMY_GEMINI_KEY)
     monkeypatch.setenv("DEEPSEEK_API_KEY", DUMMY_DEEPSEEK_KEY)
     monkeypatch.setenv("GLM_API_KEY", DUMMY_GLM_KEY)
+    monkeypatch.setenv("DASHSCOPE_API_KEY", DUMMY_DASHSCOPE_KEY)
 
     task_id = "TASK-SECURITY-TEST-01"
     state_dir = tmp_path / "state"
@@ -61,13 +65,14 @@ def test_crash_report_and_human_review_cannot_leak_keys(monkeypatch, tmp_path):
 
     # 1. Test halt_human and CRASH_REPORT
     with pytest.raises(RuntimeError):
-        sm.halt_human(f"Fatal crash leaking {DUMMY_GEMINI_KEY} and {DUMMY_DEEPSEEK_KEY}")
+        sm.halt_human(f"Fatal crash leaking {DUMMY_GEMINI_KEY} and {DUMMY_DEEPSEEK_KEY} and {DUMMY_DASHSCOPE_KEY}")
     crash_report = Path(f"CRASH_REPORT_{task_id}.md")
     assert crash_report.exists()
     try:
         crash_content = crash_report.read_text(encoding="utf-8")
         assert DUMMY_GEMINI_KEY not in crash_content
         assert DUMMY_DEEPSEEK_KEY not in crash_content
+        assert DUMMY_DASHSCOPE_KEY not in crash_content
         assert REDACTED_REPLACEMENT in crash_content
     finally:
         if crash_report.exists():
@@ -76,7 +81,7 @@ def test_crash_report_and_human_review_cannot_leak_keys(monkeypatch, tmp_path):
     # 2. Test request_human_review and HUMAN_REVIEW
     with pytest.raises(RuntimeError):
         sm.request_human_review(
-            f"Transport failure on https://api.example.com?key={DUMMY_GLM_KEY} with {DUMMY_GEMINI_KEY}",
+            f"Transport failure on https://api.example.com?key={DUMMY_GLM_KEY} with {DUMMY_GEMINI_KEY} and {DUMMY_DASHSCOPE_KEY}",
             gate="LOGIC_AUDIT"
         )
     human_report = Path(f"HUMAN_REVIEW_{task_id}.md")
@@ -85,6 +90,7 @@ def test_crash_report_and_human_review_cannot_leak_keys(monkeypatch, tmp_path):
         human_content = human_report.read_text(encoding="utf-8")
         assert DUMMY_GEMINI_KEY not in human_content
         assert DUMMY_GLM_KEY not in human_content
+        assert DUMMY_DASHSCOPE_KEY not in human_content
         assert REDACTED_REPLACEMENT in human_content
     finally:
         if human_report.exists():
@@ -97,6 +103,7 @@ def test_crash_report_and_human_review_cannot_leak_keys(monkeypatch, tmp_path):
     assert DUMMY_GEMINI_KEY not in state_content
     assert DUMMY_DEEPSEEK_KEY not in state_content
     assert DUMMY_GLM_KEY not in state_content
+    assert DUMMY_DASHSCOPE_KEY not in state_content
     assert REDACTED_REPLACEMENT in state_content
 
 def test_network_retry_redacts_credentials_on_transport_failure(monkeypatch):

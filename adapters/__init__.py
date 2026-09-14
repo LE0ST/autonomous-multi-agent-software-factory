@@ -7,6 +7,7 @@ from .network_retry import retry_with_backoff, NetworkTransportError
 from .gemini_adapter import GeminiAdapter
 from .deepseek_adapter import DeepSeekAdapter
 from .glm_adapter import GLMAdapter
+from .qwen_adapter import QwenAdapter
 from .sanitizer import sanitize_secret_text
 
 __all__ = [
@@ -18,5 +19,6 @@ __all__ = [
     "GeminiAdapter",
     "DeepSeekAdapter",
     "GLMAdapter",
+    "QwenAdapter",
     "sanitize_secret_text"
 ]

@@ -91,6 +91,7 @@ class StateManager:
                 "total_cumulative_worker_runs": 0,
                 "max_cumulative_worker_runs": b.get("max_cumulative_worker_runs", 5)
             },
+            "audit_model_used": None,
             "history": []
         }
 
@@ -230,6 +231,14 @@ class StateManager:
             raise RuntimeError(f"Human review required ({gate}): {safe_reason}")
         if exit_process:
             sys.exit(0)
+
+    def record_audit_model(self, provider: str, model: str):
+        """Records the model and provider that produced a valid Logic Security audit verdict."""
+        self.data["audit_model_used"] = {
+            "provider": sanitize_secret_text(provider).strip().lower(),
+            "model": sanitize_secret_text(model).strip()
+        }
+        self.save()
 
     def can_resume_merge(self) -> tuple[bool, str]:
         """

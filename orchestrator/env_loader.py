@@ -28,6 +28,8 @@ def load_api_keys(repo_root: Path = None):
                     os.environ["DEEPSEEK_API_KEY"] = v
                 elif k in ["glm", "glm_api_key"] and not os.getenv("GLM_API_KEY"):
                     os.environ["GLM_API_KEY"] = v
+                elif k in ["qwen", "dashscope", "dashscope_api_key"] and not os.getenv("DASHSCOPE_API_KEY"):
+                    os.environ["DASHSCOPE_API_KEY"] = v
         except Exception:
             pass
 
