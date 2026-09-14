@@ -1,102 +1,105 @@
-# Guía de Contribución — Autonomous Multi-Agent Software Factory
+﻿# Contribution Guidelines — Autonomous Multi-Agent Software Factory
 
-Gracias por tu interés en contribuir a **Autonomous Multi-Agent Software Factory**. Este proyecto explora la ingeniería de software autónoma gobernada por máquinas de estados finitos (FSM), compuertas deterministas y aislamiento estricto mediante Git worktrees.
+English | [Español](CONTRIBUTING_ES.md)
 
----
-
-## 1. Principios Fundamentales del Proyecto
-
-1. **Determinismo sobre Heurística:** Las decisiones de calidad, seguridad e integración no dependen del juicio de un LLM si pueden validarse deterministamente mediante código (pruebas de cobertura, diff gates, linters SAST, fast-forward merges).
-2. **Principio de Menor Autoridad (Least Privilege):** Ningún agente (especialmente el Worker) tiene acceso a modificar archivos fuera de los explícitamente autorizados en la especificación técnica de la tarea (`specs/TASK-XXX.md`).
-3. **Inviolabilidad de las Compuertas:** Ninguna compuerta del pipeline puede ser deshabilitada o debilitada para forzar la integración de código.
+Thank you for your interest in contributing to **Autonomous Multi-Agent Software Factory**. This project explores autonomous software engineering governed by Finite State Machines (FSM), deterministic verification gates, execution budgets, and strict Git worktree isolation.
 
 ---
 
-## 2. Configuración del Entorno de Desarrollo
+## 1. Core Project Principles
 
-### Requisitos Previos
+1. **Determinism over Heuristics:** Quality, security, and integration decisions do not rely on LLM judgment whenever they can be validated deterministically via code (coverage checks, diff gates, SAST linters, fast-forward merges).
+2. **Principle of Least Privilege:** No agent (especially the Worker) has access to modify files outside those explicitly authorized in the task technical specification (`specs/TASK-XXX.md`).
+3. **Gate Inviolability:** No pipeline verification gate may be disabled or weakened to facilitate code integration.
+
+---
+
+## 2. Development Environment Setup
+
+### Prerequisites
 * **Python:** `>= 3.10`
 * **Git:** `>= 2.30`
-* **Semgrep:** `>= 1.0.0` (para análisis SAST)
+* **Semgrep:** `>= 1.0.0` (for SAST security scanning)
 
-### Instalación en Entorno Virtual
+### Virtual Environment Installation
 
-En Windows (PowerShell):
+On Windows (PowerShell):
 ```powershell
-# Clonar el repositorio y posicionarse en la raíz
-cd Agentes
+# Clone repository and navigate to root
+cd autonomous-multi-agent-software-factory
 
-# Crear y activar entorno virtual
+# Create and activate virtual environment
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 
-# Instalar dependencias del proyecto en modo editable
+# Install package in editable mode with development dependencies
 pip install -e .
 ```
 
-En Linux / macOS:
+On Linux / macOS:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
 ```
 
-### Configuración de Credenciales
-Copia el archivo de plantilla `.env.example` a `.env`:
+### Credential Configuration
+Copy the template `.env.example` to `.env`:
 ```powershell
 cp .env.example .env
 ```
-Configura tus claves para los proveedores de modelos que desees utilizar:
-* `GEMINI_API_KEY`: Requerida para Architect, Triage, Security Filter y Logic Security.
-* `DEEPSEEK_API_KEY`: Requerida para el Worker (generador de código y tests).
-* `GLM_API_KEY`: Opcional para Logic Security con Zhipu GLM.
+Configure your API keys for the model providers you intend to use:
+* `GEMINI_API_KEY`: Required for Architect, Triage, Security Filter, and Logic Security.
+* `DEEPSEEK_API_KEY`: Required for Worker (code generation and unit test drafting).
+* `GLM_API_KEY`: Optional for alternative Logic Security via Zhipu GLM.
 
 > [!CAUTION]
-> **Nunca comittees ni envíes archivos `.env` o credenciales reales.** El repositorio ignora activamente `.env` y `apis.txt`. Cualquier contribución que incluya secretos en texto plano será rechazada de inmediato.
+> **Never commit or push `.env` files or real credentials.** The repository actively ignores `.env` and credential files. Any pull request containing plain-text secrets will be rejected immediately.
 
 ---
 
-## 3. Flujo de Trabajo y Ramas (Branching)
+## 3. Workflow and Branching Strategy
 
-* **Rama base de integración:** `dev`. Todo merge se realiza exclusivamente mediante Fast-Forward (`--ff-only`).
-* **Ramas de tareas:** `task/TASK-XXX`.
-* **Aislamiento:** El orquestador opera en Git worktrees temporales ubicados en `.worktrees/wt_TASK-XXX` para garantizar que la copia de trabajo principal permanezca intacta durante la generación y prueba de código.
-
----
-
-## 4. Estructura de Tareas y Especificaciones
-
-Toda nueva tarea debe documentarse en `specs/TASK-XXX.md` utilizando como base la plantilla [`specs/TEMPLATE.md`](specs/TEMPLATE.md):
-
-* **Objetivo claro y conciso.**
-* **Tabla de Invariantes de Seguridad / Lógica (`SEC-XX` / `LOG-XX`):** Reglas inviolables que deben verificarse tanto en tests unitarios como en la auditoría de seguridad lógica.
-* **Archivos permitidos:** Lista explícita de rutas que el Worker tiene autorización de crear o modificar.
-* **Archivos prohibidos:** Rutas protegidas del repositorio (raíz, configuración, orquestador, scripts de compuertas).
-* **Criterio de Cobertura:** Umbral mínimo de cobertura de código (por defecto $\ge 85\%$).
+* **Base Integration Branch:** `dev`. All code integration occurs exclusively via Fast-Forward merge (`--ff-only`).
+* **Task Branches:** `task/TASK-XXX`.
+* **Worktree Isolation:** The orchestrator operates inside isolated Git worktrees located at `.worktrees/wt_TASK-XXX`, ensuring the primary working copy remains clean during code generation, test runs, and static analysis.
+* **Deterministic Recovery:** If an authorized task suspends during `AUTO_MERGE` (e.g. dirty working tree) or `LOGIC_AUDIT` (e.g. transient HTTP 429/503 rate limits), use the authorized `--resume-merge` or `--resume-audit` commands respectively. Neither recovery path bypasses verification gates nor performs automatic rebases if branch divergence is detected.
 
 ---
 
-## 5. Validación y Suite de Pruebas
+## 4. Task Structure and Specifications
 
-Antes de proponer cualquier cambio al orquestador o a los componentes del sistema:
+Every new task must be formally specified in `specs/TASK-XXX.md` using [`specs/TEMPLATE.md`](specs/TEMPLATE.md) as the canonical blueprint:
+
+* **Clear, concise task objective.**
+* **Security & Logic Invariants Table (`SEC-XX` / `LOG-XX`):** Inviolable rules that must be verified both by automated unit tests and semantic logic security audits.
+* **Allowed Files:** Explicit whitelist of paths the Worker is authorized to create or modify.
+* **Forbidden Files:** Protected repository infrastructure paths (root files, configuration, orchestrator core, verification gates).
+* **Code Coverage Threshold:** Minimum required line coverage percentage (default $\ge 85\%$).
+
+---
+
+## 5. Validation and Test Suite
+
+Before proposing any changes to the orchestrator, adapters, or system components:
 
 ```powershell
-# 1. Verificar formato y espacios
+# 1. Verify whitespace, formatting, and trailing spaces
 git diff --check
 
-# 2. Ejecutar la suite completa de pruebas unitarias e integración
+# 2. Run the complete unit and integration test suite
 python -m pytest -v tests/
 ```
 
-Las 61 pruebas existentes deben pasar al 100%. No está permitido comentar, eludir ni eliminar pruebas existentes para facilitar aprobaciones.
+The 115 existing tests must pass at 100%. Commenting out, skipping, or deleting existing tests to pass CI is strictly prohibited.
 
 ---
 
-## 6. Proceso de Pull Request
+## 6. Pull Request Process
 
-1. Asegúrate de que `dev` esté actualizado y que tu rama esté rebasada limpiamente sobre `dev`.
-2. Verifica que `git status` reporte el árbol completamente limpio.
-3. Envía tu PR con una descripción clara de:
-   * Qué problema resuelve o qué compuerta/adaptador mejora.
-   * Pruebas añadidas para verificar la funcionalidad.
-   * Confirmación de que todas las compuertas y presupuestos de la FSM continúan respetándose.
+1. Ensure your local `dev` branch is up-to-date with upstream and your working branch is cleanly rebased on top of `dev`.
+2. Verify that `git status --short` returns a completely clean working tree.
+3. Submit your PR with a clear, concise description covering:
+   * The problem solved or the adapter/gate improved.
+   * New unit/integration tests added to verify the functionality.
+   * Explicit confirmation that all six verification gates, FSM invariants, and execution budgets remain strictly respected.

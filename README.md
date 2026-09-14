@@ -67,6 +67,8 @@ flowchart TD
     LOGIC_AUDIT -- Network error / 429 --> HUMAN_REVIEW[HUMAN REVIEW<br/>Safe pause without budget penalty]
     LOGIC_AUDIT -- Invariant Violated --> REPLAN_SEC
     
+    HUMAN_REVIEW -. --resume-audit .-> LOGIC_AUDIT
+
     LOGIC_AUDIT -- Passed --> AUTO_MERGE{AUTO MERGE<br/>merge_gate.py: Fast-Forward into dev}
     AUTO_MERGE -- Dirty / Diverged Tree --> HALT_MERGE[HALT_HUMAN: Safe lock]
     AUTO_MERGE -- Success FF --> COMPLETED([COMPLETED: Task Finished])
@@ -120,6 +122,10 @@ TRIAGING -> SAST_SCAN -> SAST_FILTER -> LOGIC_AUDIT -> AUTO_MERGE
 ```
 Terminal / suspension states: `COMPLETED`, `HALT_HUMAN`, `HUMAN_REVIEW`.
 
+**Deterministic Recovery Pathways:**
+* **Merge Recovery (`--resume-merge`):** `HALT_HUMAN` (at `AUTO_MERGE`) $\to$ `AUTO_MERGE` $\to$ `COMPLETED`
+* **Audit Recovery (`--resume-audit`):** `HUMAN_REVIEW` (at `LOGIC_AUDIT`) $\to$ `LOGIC_AUDIT` $\to$ `AUTO_MERGE` $\to$ `COMPLETED`
+
 ### Execution Budgets
 Configured in [`orchestrator/config.json`](orchestrator/config.json):
 * `max_worker_per_epoch`: **2** local attempts by Worker per epoch.
@@ -132,6 +138,7 @@ Configured in [`orchestrator/config.json`](orchestrator/config.json):
 * **`CRASH_REPORT_<TASK_ID>.md`:** Triggered when any budget is exhausted or an unrecoverable failure occurs. Freezes worktree artifacts for inspection.
 * **`HUMAN_REVIEW`:** Triggered when external LLM endpoints return persistent network or rate limit errors (HTTP 429 or 503). Suspends execution in a safe state **without spending Worker attempts or replan budgets**.
 * **`--resume-merge`:** Safe recovery pathway for tasks that cleared every verification gate but halted at `AUTO_MERGE` (e.g., due to local uncommitted edits on `dev`). Performs a clean fast-forward merge without invoking agents, LLMs, or altering budget counters.
+* **`--resume-audit`:** Safe recovery pathway for tasks suspended in `HUMAN_REVIEW` with `blocked_reason.gate == LOGIC_AUDIT` (e.g., following upstream HTTP 429 rate limits). Resumes exclusively the pending Logic Security LLM audit without re-running Worker, pytest, SAST, or consuming Worker attempts/replans. If the audit passes, proceeds cleanly towards `AUTO_MERGE`. Enforces Git fast-forward ancestor checks before execution and strictly avoids automatic rebases, preserving worktree integrity if branch divergence occurs.
 
 ---
 
@@ -267,7 +274,7 @@ git log --oneline --decorate -5
 If an authorized task successfully passes all verification gates (`SPEC_GATE`, `DIFF_GATE`, `TESTING`, `SAST_SCAN`, `LOGIC_AUDIT`) but stops specifically during `AUTO_MERGE` (e.g., due to local uncommitted modifications or working tree dirt in the main repository):
 
 ```bash
-python orchestrator.py --resume-merge TASK-004
+python orchestrator.py --resume-merge TASK-XXX
 ```
 
 > [!NOTE]
@@ -275,8 +282,28 @@ python orchestrator.py --resume-merge TASK-004
 > * `--resume-merge` is **strictly a recovery mechanism** for tasks authorized at `AUTO_MERGE`.
 > * It **never** re-runs Worker, pytest, SAST, Triage, or Logic Security agents.
 > * It **never** consumes Worker attempts or replan budgets (`worker_attempts_in_epoch` and `total_cumulative_worker_runs` remain untouched).
-> * It is **not** a generic resolution for arbitrary `HALT_HUMAN` states (e.g. failing unit tests or security rejections cannot be bypassed with `--resume-merge`).
+> * It is **not** a generic resolution for arbitrary `HALT_HUMAN` states (e.g., failing unit tests or security rejections cannot be bypassed with `--resume-merge`).
 > * It validates that the task branch exists, the main tree is clean, and ancestor relationships hold, executing only `git merge --ff-only`.
+
+---
+
+### Deterministic Audit Recovery (`--resume-audit`)
+
+If an authorized task successfully passes all upstream verification gates (`SPEC_GATE`, `DIFF_GATE`, `TESTING`, `SAST_SCAN`) but pauses in `HUMAN_REVIEW` at `LOGIC_AUDIT` due to transient upstream API rate limits or network unavailability (e.g., HTTP 429 Too Many Requests or 503 Service Unavailable):
+
+```bash
+python orchestrator.py --resume-audit TASK-XXX
+```
+
+> [!NOTE]
+> **Strict Operational Boundary of `--resume-audit`:**
+> * `--resume-audit` is **strictly authorized** only for tasks suspended in `HUMAN_REVIEW` where `blocked_reason.gate == "LOGIC_AUDIT"` and a historical `LOGIC_AUDIT -> HUMAN_REVIEW` transition is verified in the state ledger.
+> * It **never** re-executes Worker, Architect, Triage, `SPEC_GATE`, `DIFF_GATE`, `TESTING` (pytest), or `SAST_SCAN`.
+> * It **never** consumes Worker attempts or replan budgets (`worker_attempts_in_epoch`, `logic_replans`, `security_replans` remain untouched).
+> * It retries **exclusively** the pending Logic Security LLM audit against the preserved worktree.
+> * If upstream rate limits (HTTP 429 / 503) persist, it safely transitions back to `HUMAN_REVIEW` without penalty.
+> * If the audit passes and fast-forward conditions are met, it removes the worktree and executes `AUTO_MERGE` into `dev`.
+> * If Git divergence is detected (i.e., `dev` received independent commits and is no longer an ancestor of `task/<task_id>`), it **strictly denies recovery and does not perform automatic rebase**, preserving the worktree intact for manual reconciliation.
 
 ---
 
@@ -319,9 +346,9 @@ All unit and integration tests run locally without requiring external network ac
 
 ---
 
-## 10. Case Studies: `TASK-001`, `TASK-002`, and `TASK-003`
+## 10. Case Studies: `TASK-001`, `TASK-002`, `TASK-003`, and `TASK-004`
 
-The repository contains the complete development and verification history for three integrated production tasks:
+The repository contains the complete development and verification history for four integrated production tasks:
 
 1. **`TASK-001` — Token Validator (`src/auth/token_validator.py`):**
    * **Specification:** [`specs/TASK-001.md`](specs/TASK-001.md) defined token verification using constant-time digest comparison (`hmac.compare_digest`), rejecting empty or invalid inputs.
@@ -339,6 +366,13 @@ The repository contains the complete development and verification history for th
    * **Worker:** Generated `RateLimiter` and comprehensive unit tests in [`tests/test_rate_limiter.py`](tests/test_rate_limiter.py).
    * **Gates & Integration:** Passed all verification gates (`SPEC_GATE`, `DIFF_GATE`, `TESTING`, `SAST_SCAN`, `LOGIC_AUDIT`), initially halted at `AUTO_MERGE` with `HALT_HUMAN` because of an untracked specification file in the main working tree, and was subsequently integrated into `dev` after resolving repository cleanliness.
 
+4. **`TASK-004` — Thread-Safe In-Memory TTL/LRU Cache (`src/cache/ttl_cache.py`):**
+   * **Specification:** [`specs/TASK-004.md`](specs/TASK-004.md) defined a concurrent `TTLCache` with configurable capacity (`max_size`) and default expiration (`default_ttl`), `set`, `get`, `delete`, `clear`, LRU eviction for active entries, strict thread safety under concurrent operations (`[AC-01]` through `[AC-10]`), and security invariants (`[SEC-01]` through `[SEC-04]`).
+   * **Worker Attempt 1 & Triage:** In Epoch 1, Worker attempt 1 generated initial code and tests. During `TESTING`, concurrent execution tests failed due to a race condition. The deterministic `TESTING` gate caught the failure and invoked **Triage**, which inspected the execution traceback and diagnosed the exact concurrency root cause.
+   * **Worker Attempt 2:** Guided by the structured Triage diagnosis, Worker attempt 2 corrected the concurrency handling and internal locking.
+   * **Gates & Suspension:** Attempt 2 passed `DIFF_GATE`, `TESTING` (100% code coverage across 19 unit tests in [`tests/test_ttl_cache.py`](tests/test_ttl_cache.py)), and `SAST_SCAN` (zero findings in Semgrep and Bandit). At `LOGIC_AUDIT`, an upstream API rate limit (HTTP 429) was encountered; the pipeline safely transitioned to `HUMAN_REVIEW` without penalizing Worker replan budgets.
+   * **Recovery & Integration:** Once the provider rate limit cleared, recovery was executed via `--resume-audit TASK-004`. The audit passed, the worktree was cleanly detached, and the task completed through `AUTO_MERGE -> COMPLETED` via Fast-Forward merge into `dev`.
+
 ---
 
 ## 11. Repository Structure
@@ -348,7 +382,8 @@ The repository contains the complete development and verification history for th
 ├── .env.example                # Safe credentials template
 ├── .gitignore                  # Git exclusion rules
 ├── .semgrepignore              # SAST exclusion rules
-├── CONTRIBUTING.md             # Contribution guidelines
+├── CONTRIBUTING.md             # Contribution guidelines (English)
+├── CONTRIBUTING_ES.md          # Guía de contribución (Español)
 ├── LICENSE                     # MIT License
 ├── pyproject.toml              # Packaging metadata and dependencies
 ├── README.md                   # Primary English documentation
@@ -363,7 +398,8 @@ The repository contains the complete development and verification history for th
 │   ├── deepseek_adapter.py     # Worker / code generation
 │   ├── gemini_adapter.py       # Architect, Triage, Security Filter, Logic Security
 │   ├── glm_adapter.py          # Alternative Logic Security provider
-│   └── network_retry.py        # HTTP resilience with exponential backoff
+│   ├── network_retry.py        # HTTP resilience with exponential backoff
+│   └── sanitizer.py            # Secret redaction and credential hygiene
 │
 ├── orchestrator/               # Core orchestrator and FSM
 │   ├── config.json             # Budgets, roles, and thresholds
@@ -383,12 +419,15 @@ The repository contains the complete development and verification history for th
 │   ├── TASK-001.md             # Token validator specification
 │   ├── TASK-002.md             # Secure password validator specification
 │   ├── TASK-003.md             # In-memory rate limiter specification
+│   ├── TASK-004.md             # Thread-safe TTL/LRU cache specification
 │   └── TEMPLATE.md             # Canonical specification template
 │
 ├── src/                        # Production code generated and integrated
 │   ├── auth/
 │   │   ├── password_validator.py
 │   │   └── token_validator.py
+│   ├── cache/
+│   │   └── ttl_cache.py
 │   └── security/
 │       └── rate_limiter.py
 │
@@ -396,13 +435,17 @@ The repository contains the complete development and verification history for th
     ├── test_deepseek_adapter.py
     ├── test_diff_gate.py
     ├── test_e2e_dry_run.py
+    ├── test_gemini_adapter.py
     ├── test_network_retry.py
     ├── test_password_validator.py
     ├── test_rate_limiter.py
+    ├── test_resume_audit.py
     ├── test_resume_merge.py
+    ├── test_sanitizer.py
     ├── test_spec_gate.py
     ├── test_state_manager.py
-    └── test_token_validator.py
+    ├── test_token_validator.py
+    └── test_ttl_cache.py
 ```
 
 ---

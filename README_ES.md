@@ -67,6 +67,8 @@ flowchart TD
     LOGIC_AUDIT -- Error red / 429 --> HUMAN_REVIEW[HUMAN REVIEW<br/>Pausa segura sin gastar budget]
     LOGIC_AUDIT -- Invariante violado --> REPLAN_SEC
 
+    HUMAN_REVIEW -. --resume-audit .-> LOGIC_AUDIT
+
     LOGIC_AUDIT -- Aprobado --> AUTO_MERGE{AUTO MERGE<br/>merge_gate.py: Fast-Forward dev}
     AUTO_MERGE -- Árbol sucio o divergente --> HALT_MERGE[HALT_HUMAN: Bloqueo seguro]
     AUTO_MERGE -- Éxito FF --> COMPLETED([COMPLETED: Tarea Finalizada])
@@ -113,6 +115,17 @@ flowchart TD
 
 El sistema está regulado por [`orchestrator/state_manager.py`](orchestrator/state_manager.py), que persiste el estado en `orchestrator/state/state_<TASK_ID>.json`:
 
+### Estados Formales de la FSM
+```text
+INIT -> SPEC_DESIGN -> SPEC_GATE -> BUILDING -> DIFF_GATE -> TESTING ->
+TRIAGING -> SAST_SCAN -> SAST_FILTER -> LOGIC_AUDIT -> AUTO_MERGE
+```
+Estados terminales / suspensión: `COMPLETED`, `HALT_HUMAN`, `HUMAN_REVIEW`.
+
+**Rutas Deterministas de Recuperación:**
+* **Recuperación de Merge (`--resume-merge`):** `HALT_HUMAN` (en `AUTO_MERGE`) $\to$ `AUTO_MERGE` $\to$ `COMPLETED`
+* **Recuperación de Auditoría (`--resume-audit`):** `HUMAN_REVIEW` (en `LOGIC_AUDIT`) $\to$ `LOGIC_AUDIT` $\to$ `AUTO_MERGE` $\to$ `COMPLETED`
+
 ### Presupuestos de Ejecución (Execution Budgets)
 Definidos en [`orchestrator/config.json`](orchestrator/config.json):
 * `max_worker_per_epoch`: **2** intentos del Worker por época de resolución.
@@ -125,6 +138,7 @@ Definidos en [`orchestrator/config.json`](orchestrator/config.json):
 * **`CRASH_REPORT_<TASK_ID>.md`:** Si se agota cualquier presupuesto o se detecta una condición fatal, el Circuit Breaker detiene el proceso y genera un informe forense no destructivo.
 * **`HUMAN_REVIEW`:** Si un servicio de auditoría externo devuelve errores de red persistentes (HTTP 429 Too Many Requests o 503 Service Unavailable), el pipeline entra en pausa controlada **sin consumir presupuestos de Worker**.
 * **`--resume-merge`:** Permite recuperar una tarea autorizada que completó todas las compuertas pero se detuvo en `AUTO_MERGE` (por ejemplo, por tener archivos sin commitear en el árbol de trabajo). Realiza exclusivamente la fusión Fast-Forward sin invocar agentes, compuertas ni consumir presupuestos.
+* **`--resume-audit`:** Mecanismo de recuperación seguro para tareas pausadas en `HUMAN_REVIEW` con `blocked_reason.gate == LOGIC_AUDIT` (por ejemplo, tras límites de tasa HTTP 429 o 503). Reanuda exclusivamente la auditoría lógica de seguridad pendiente sin volver a ejecutar Worker, pytest, SAST ni consumir presupuestos de reintentos/replanificación. Si la auditoría aprueba, avanza hacia `AUTO_MERGE`. Valida que `dev` sea ancestro antes de ejecutar y nunca realiza rebases automáticos, preservando el worktree si existe divergencia.
 
 ---
 
@@ -240,7 +254,7 @@ git log --oneline --decorate -5
 Si una tarea autorizada superó con éxito todas las compuertas de verificación (`SPEC_GATE`, `DIFF_GATE`, `TESTING`, `SAST_SCAN`, `LOGIC_AUDIT`) pero se detuvo específicamente durante `AUTO_MERGE` (por ejemplo, por modificaciones locales sin commitear en el árbol principal):
 
 ```powershell
-python orchestrator.py --resume-merge TASK-004
+python orchestrator.py --resume-merge TASK-XXX
 ```
 
 > [!NOTE]
@@ -250,6 +264,26 @@ python orchestrator.py --resume-merge TASK-004
 > * **No** consume presupuestos de Worker ni de replanificación (`worker_attempts_in_epoch` y `total_cumulative_worker_runs` permanecen intactos).
 > * **No** es una solución genérica para estados arbitrarios de `HALT_HUMAN` (por ejemplo, fallos de tests o rechazos de seguridad no pueden eludirse con `--resume-merge`).
 > * Valida la existencia de la rama de tarea, la limpieza del repositorio principal y la relación de ancestralidad, ejecutando únicamente `git merge --ff-only`.
+
+---
+
+### Recuperación Determinista de Auditoría (`--resume-audit`)
+
+Si una tarea autorizada superó todas las compuertas previas de verificación (`SPEC_GATE`, `DIFF_GATE`, `TESTING`, `SAST_SCAN`) pero entra en pausa en `HUMAN_REVIEW` en `LOGIC_AUDIT` debido a límites de tasa transitorios de API o indisponibilidad de red (ej. HTTP 429 Too Many Requests o 503 Service Unavailable):
+
+```powershell
+python orchestrator.py --resume-audit TASK-XXX
+```
+
+> [!NOTE]
+> **Alcance Estricto de `--resume-audit`:**
+> * `--resume-audit` está **estrictamente autorizado** únicamente para tareas en `HUMAN_REVIEW` donde `blocked_reason.gate == "LOGIC_AUDIT"` y existe la transición previa `LOGIC_AUDIT -> HUMAN_REVIEW` en el historial.
+> * **No** vuelve a ejecutar Worker, Architect, Triage, `SPEC_GATE`, `DIFF_GATE`, `TESTING` (pytest) ni `SAST_SCAN`.
+> * **No** consume intentos del Worker por época ni presupuestos de replanificación (`worker_attempts_in_epoch`, `logic_replans`, `security_replans` permanecen intactos).
+> * Reintenta **exclusivamente** la auditoría lógica de seguridad pendiente contra el worktree preservado.
+> * Si persiste el límite de tasa externo (HTTP 429 / 503), retorna de forma segura a `HUMAN_REVIEW` sin penalización.
+> * Si la auditoría aprueba y se cumple la condición de Fast-Forward, remueve el worktree y ejecuta `AUTO_MERGE` hacia `dev`.
+> * Si se detecta divergencia en Git (`dev` no es ancestro de `task/<task_id>`), **deniega estrictamente la recuperación y no realiza rebase automático**, preservando el worktree intacto para reconciliación manual.
 
 ---
 
@@ -292,9 +326,9 @@ Todas las pruebas unitarias y de integración se ejecutan localmente sin requeri
 
 ---
 
-## 8. Casos de Estudio: `TASK-001`, `TASK-002` y `TASK-003`
+## 8. Casos de Estudio: `TASK-001`, `TASK-002`, `TASK-003` y `TASK-004`
 
-El repositorio incluye la ejecución y validación completa de tres tareas reales integradas en `dev`:
+El repositorio incluye la ejecución y validación completa de cuatro tareas reales integradas en `dev`:
 
 1. **`TASK-001`**: Módulo de validación de tokens (`src/auth/token_validator.py`):
    * **Especificación:** [`specs/TASK-001.md`](specs/TASK-001.md) definió validación de tokens con comparación segura (`hmac.compare_digest`), rechazando tokens vacíos o inválidos.
@@ -312,6 +346,13 @@ El repositorio incluye la ejecución y validación completa de tres tareas reale
    * **Worker:** Generó la clase `RateLimiter` y pruebas unitarias exhaustivas en [`tests/test_rate_limiter.py`](tests/test_rate_limiter.py).
    * **Compuertas e Integración:** Superó las compuertas de verificación (`SPEC_GATE`, `DIFF_GATE`, `TESTING`, `SAST_SCAN`, `LOGIC_AUDIT`), se detuvo inicialmente en `AUTO_MERGE` con `HALT_HUMAN` debido a un archivo de especificación sin seguimiento en el repositorio principal, y se integró limpiamente en `dev` tras asegurar la limpieza del árbol de trabajo.
 
+4. **`TASK-004`**: Caché TTL/LRU en memoria con seguridad de hilos (`src/cache/ttl_cache.py`):
+   * **Especificación:** [`specs/TASK-004.md`](specs/TASK-004.md) definió una clase concurrente `TTLCache` con capacidad (`max_size`) y expiración por defecto (`default_ttl`) configurables, operaciones `set`, `get`, `delete`, `clear`, desalojo LRU de entradas activas, soporte concurrente multi-hilo (`[AC-01]` a `[AC-10]`) e invariantes de seguridad (`[SEC-01]` a `[SEC-04]`).
+   * **Worker Intento 1 y Triage:** En la Época 1, el primer intento del Worker generó el código inicial, pero falló en la compuerta `TESTING` debido a una condición de carrera bajo concurrencia. La compuerta determinista de pruebas detectó el fallo e invocó al modelo de **Triage**, el cual analizó el stack trace y diagnosticó la causa raíz de concurrencia.
+   * **Worker Intento 2:** Con base en el diagnóstico estructurado de Triage, el intento 2 del Worker corrigió los mecanismos de sincronización y desalojo.
+   * **Compuertas y Pausa:** El intento 2 superó `DIFF_GATE`, `TESTING` (100% de cobertura en 19 pruebas unitarias en [`tests/test_ttl_cache.py`](tests/test_ttl_cache.py)) y `SAST_SCAN` (cero vulnerabilidades en Semgrep y Bandit). En `LOGIC_AUDIT`, se produjo un error de límite de tasa del proveedor (HTTP 429); el pipeline pausó de manera segura en `HUMAN_REVIEW` sin consumir presupuestos de replanificación del Worker.
+   * **Recuperación e Integración:** Tras superarse la saturación del servicio, se ejecutó la recuperación mediante `--resume-audit TASK-004`. La auditoría lógica aprobó el diff, el worktree fue desvinculado limpiamente y la tarea concluyó en `AUTO_MERGE -> COMPLETED` mediante fusión Fast-Forward hacia `dev`.
+
 ---
 
 ## 9. Estructura del Repositorio
@@ -321,7 +362,8 @@ El repositorio incluye la ejecución y validación completa de tres tareas reale
 ├── .env.example                # Plantilla de credenciales segura
 ├── .gitignore                  # Reglas de exclusión de Git
 ├── .semgrepignore              # Reglas de exclusión para SAST
-├── CONTRIBUTING.md             # Guía de contribución y buenas prácticas
+├── CONTRIBUTING.md             # Guía de contribución (English)
+├── CONTRIBUTING_ES.md          # Guía de contribución (Español)
 ├── LICENSE                     # Licencia MIT
 ├── pyproject.toml              # Metadatos del paquete y dependencias
 ├── README.md                   # Documentación principal en inglés
@@ -336,7 +378,8 @@ El repositorio incluye la ejecución y validación completa de tres tareas reale
 │   ├── deepseek_adapter.py     # Worker / Code Generator
 │   ├── gemini_adapter.py       # Architect, Triage, Security Filter, Logic Security
 │   ├── glm_adapter.py          # Logic Security alternativo
-│   └── network_retry.py        # Resiliencia HTTP con backoff exponencial
+│   ├── network_retry.py        # Resiliencia HTTP con backoff exponencial
+│   └── sanitizer.py            # Redacción de secretos e higiene de credenciales
 │
 ├── orchestrator/               # Núcleo del orquestador y FSM
 │   ├── config.json             # Presupuestos, roles y umbrales
@@ -356,12 +399,15 @@ El repositorio incluye la ejecución y validación completa de tres tareas reale
 │   ├── TASK-001.md             # Especificación de autenticación de tokens
 │   ├── TASK-002.md             # Especificación de validador de contraseñas
 │   ├── TASK-003.md             # Especificación de limitador de tasa en memoria
+│   ├── TASK-004.md             # Especificación de caché TTL/LRU con seguridad de hilos
 │   └── TEMPLATE.md             # Plantilla canónica de especificaciones
 │
 ├── src/                        # Código productivo generado e integrado
 │   ├── auth/
 │   │   ├── password_validator.py
 │   │   └── token_validator.py
+│   ├── cache/
+│   │   └── ttl_cache.py
 │   └── security/
 │       └── rate_limiter.py
 │
@@ -369,13 +415,17 @@ El repositorio incluye la ejecución y validación completa de tres tareas reale
     ├── test_deepseek_adapter.py
     ├── test_diff_gate.py
     ├── test_e2e_dry_run.py
+    ├── test_gemini_adapter.py
     ├── test_network_retry.py
     ├── test_password_validator.py
     ├── test_rate_limiter.py
+    ├── test_resume_audit.py
     ├── test_resume_merge.py
+    ├── test_sanitizer.py
     ├── test_spec_gate.py
     ├── test_state_manager.py
-    └── test_token_validator.py
+    ├── test_token_validator.py
+    └── test_ttl_cache.py
 ```
 
 ---
