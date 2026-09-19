@@ -39,53 +39,28 @@ La mayoría de los sistemas multi-agente contemporáneos sufren de deficiencias 
 
 ```mermaid
 flowchart TD
-    Start([Inicio: TASK-XXX]) --> INIT[INIT: Cargar Config, FSM & StateLock]
-    INIT --> SPEC_GATE{SPEC GATE<br/>¿Existe y es válida?}
-
-    SPEC_GATE -- No / Falta --> ARCHITECT[ARCHITECT: Gemini 3.8 Flash<br/>Genera SPEC tabular]
-    ARCHITECT --> SPEC_GATE
-
-    SPEC_GATE -- Aprobada --> WORKTREE[Aislamiento: Git Worktree<br/>.worktrees/wt_TASK-XXX]
-    WORKTREE --> WORKER[WORKER: DeepSeek Flash<br/>Genera código y tests unitarios]
-
-    WORKER --> DIFF_GATE{DIFF GATE<br/>¿Respeta fronteras de archivos?<br/>Diff B..C contra SPEC}
-    DIFF_GATE -- Violación --> REVERT_DIFF[Revertir cambios] --> REPLAN_SEC{¿Presupuesto de replanificación?}
-
-    DIFF_GATE -- Aprobado --> TESTING{TEST RUNNER<br/>Desafíos Ocultos en Controlador<br/>Oráculo Password-v36}
-    TESTING -- Fallo de tests --> TRIAGE[TRIAGE: Gemini 3.5 Flash Lite<br/>Diagnostica causa raíz]
-    TRIAGE --> RETRY_EPOCH{¿Reintentos en época?}
-    RETRY_EPOCH -- Sí --> WORKER
-    RETRY_EPOCH -- No --> REPLAN_LOG{¿Presupuesto de replanificación?}
-    REPLAN_LOG -- Disponible --> NEW_EPOCH[Nueva Época] --> WORKER
-    REPLAN_LOG -- Agotado --> HALT_HUMAN[HALT_HUMAN: Circuit Breaker]
-
-    TESTING -- Aprobado --> SAST{SAST SCAN<br/>Semgrep reglas locales + Bandit<br/>Fail-closed en código 2}
-    SAST -- Hallazgos críticos --> SAST_FILTER[SECURITY FILTER: Gemini<br/>Discrimina falsos positivos]
-    SAST_FILTER -- Vulnerabilidad confirmada --> REPLAN_SEC
-    REPLAN_SEC -- Disponible --> NEW_EPOCH
-    REPLAN_SEC -- Agotado --> HALT_HUMAN
-
-    SAST -- Sin hallazgos --> LOGIC_AUDIT{LOGIC SECURITY AUDIT<br/>Cadena de fallback multi-proveedor<br/>Diff inmutable B..C}
-    LOGIC_AUDIT -- Falla de disponibilidad (429/503) --> FALLBACK{¿Siguiente candidato?<br/>Gemini -> DeepSeek -> Qwen -> Gemini 3.6}
-    FALLBACK -- Candidato disponible --> LOGIC_AUDIT
-    FALLBACK -- Agotados --> HUMAN_REVIEW[HUMAN REVIEW<br/>Pausa segura sin gastar budget]
-    LOGIC_AUDIT -- Invariante violado (FAIL) --> REPLAN_SEC
-
-    HUMAN_REVIEW -. --resume-audit (Capacidad opaca) .-> LOGIC_AUDIT
-
-    LOGIC_AUDIT -- Aprobado --> AUTO_MERGE{AUTO MERGE<br/>merge_gate.py: CAS atómico B -> C<br/>Requiere 4 evidencias auténticas}
-    AUTO_MERGE -- Árbol sucio o divergente --> HALT_MERGE[HALT_HUMAN: Bloqueo seguro]
-    AUTO_MERGE -- Éxito CAS --> COMPLETED([COMPLETED: Tarea Finalizada])
-
-    HALT_MERGE -. Resolver externamente .-> RESUME[--resume-merge<br/>Recuperación atómica sin LLMs]
-    RESUME --> AUTO_MERGE
+    Task["Tarea: TASK-XXX"] --> Architect["Architect: Gemini 3.8 Flash"]
+    Architect --> SPEC_GATE{"SPEC_GATE: Validación de Contrato"}
+    SPEC_GATE --> Worktree["Aislamiento: Git Worktree"]
+    Worktree --> Worker["Worker: DeepSeek Flash"]
+    Worker --> DIFF_GATE{"DIFF_GATE: Control de Fronteras"}
+    DIFF_GATE --> TESTING{"TESTING: Verificación Conductual"}
+    TESTING --> SAST_SCAN{"SAST_SCAN: Semgrep y Bandit"}
+    SAST_SCAN --> LOGIC_AUDIT{"LOGIC_AUDIT: Auditoría LLM de Seguridad"}
+    LOGIC_AUDIT --> EvidenceVerification{"Verificación de Evidencia"}
+    EvidenceVerification --> CAS{"Git CAS: Ref B a C"}
+    CAS --> COMPLETED(["COMPLETED: Tarea Finalizada"])
 ```
 
 > [!NOTE]
 > **Evolución desde la Base Publicada hacia la Arquitectura Endurecida:**
-> * **Compuerta `TESTING`:** En el commit base publicado (`c5fd13c`), las pruebas dependían de informes emitidos por `pytest` y mediciones de cobertura del cliente. En el pipeline endurecido, los resultados reportados por el candidato son un canal no confiable; la verificación se ejecuta mediante desafíos ocultos generados por el controlador (restringidos actualmente al contrato `password-v36`) con evaluación booleana exacta.
-> * **Compuerta `AUTO_MERGE`:** En el commit base publicado, la integración ejecutaba `git merge --ff-only` sobre el worktree activo. En el pipeline endurecido, se efectúa un Compare-and-Swap (CAS) atómico sobre la referencia Git (`git update-ref` CAS $B \to C$), exigiendo cuatro registros de evidencia firmados con HMAC y encadenados secuencialmente. (Véase la Regresión Funcional F1 sobre sincronización del árbol de trabajo).
-> * **Recuperación:** Las vías de reanudación (`--resume-merge`, `--resume-audit`) operan mediante capacidades opacas ligadas a la generación e instanciadas para un solo uso (sujetas al defecto confirmado S5).
+> * **Flujo Esencial del Pipeline:** El diagrama ilustra la secuencia lineal de verificación. Las rutas de error (reversión de diff ante violaciones de fronteras, bucles de diagnóstico por Triage ante fallos de tests, replanificación de seguridad ante hallazgos confirmados de SAST/auditoría y detenciones por circuit-breaker) están gobernadas por presupuestos estrictos de ejecución explicados en la prosa y la configuración.
+> * **Base Publicada vs. Desarrollo Local:** En el commit base publicado (`c5fd13c`), `TESTING` ejecutaba pytest del lado del cliente con informes de cobertura, y la integración se realizaba mediante `git merge --ff-only` sobre el worktree. En el nuevo estado de desarrollo local (aún no publicado), `TESTING` evalúa desafíos ocultos en el controlador (restringidos al contrato `password-v36`), y la integración se ejecuta mediante un Compare-and-Swap (CAS) atómico en la referencia Git (`git update-ref` CAS B → C).
+> * **Revisión Humana y Recuperación:** Las tareas suspendidas en `LOGIC_AUDIT` por fallos transitorios de disponibilidad del proveedor (HTTP 429/503) pasan a `HUMAN_REVIEW` sin consumir presupuesto, recuperables mediante `--resume-audit`. Las tareas detenidas en `AUTO_MERGE` pueden recuperarse mediante `--resume-merge`. Las capacidades de recuperación están diseñadas para un solo uso (sujetas al defecto confirmado S5).
+> * **Limitaciones de Seguridad Pendientes:**
+>   - **S2 no resuelto:** La evidencia firmada confirma la integridad y secuencia del registro, pero no prueba la ejecución concreta de la compuerta (`_record_success` acepta nombres de compuerta provistos por el llamador).
+>   - **S1 no resuelto:** El testigo de frescura local no previene la restauración (rollback) o eliminación conjunta del estado y del testigo cuando los permisos del directorio permiten modificación.
+>   - **Brecha de Worktree F1:** El CAS exclusivo sobre la referencia avanza la punta de la rama pero no sincroniza automáticamente el árbol de trabajo principal.
 
 ---
 
@@ -107,19 +82,19 @@ flowchart TD
    Valida que la especificación contenga objetivos claros, Criterios de Aceptación (`[AC-xx]`), Invariantes de Seguridad (`[SEC-xx]`), listas explícitas de archivos permitidos y prohibidos (`Allowed files` / `Forbidden files`) y trazabilidad 1:1 en la Matriz de Pruebas.
 2. **`DIFF_GATE` ([`scripts/diff_gate.py`](scripts/diff_gate.py)):
    Inspecciona `git diff B..C` frente a la especificación congelada. Aplica estrictamente fronteras de teoría de conjuntos:
-   - $\text{modified\_files} \subseteq \text{allowed\_files}$
-   - $\text{forbidden\_files} \cap \text{modified\_files} = \emptyset$
+   - `modified_files ⊆ allowed_files`
+   - `forbidden_files ∩ modified_files = ∅`
    Bloquea modificaciones sobre archivos de infraestructura de raíz (`pyproject.toml`, `.env*`, `RULES.md`, `orchestrator/`, `scripts/`).
 3. **`TESTING` / Verificación Conductual ([`scripts/test_runner.py`](scripts/test_runner.py); suite de investigación local: `trusted_tests/suite.py`):**
-   * **Base Publicada:** Ejecutaba `pytest` exigiendo $\ge 85\%$ de cobertura en archivos de la tarea.
+   * **Base Publicada:** Ejecutaba `pytest` exigiendo ≥ 85% de cobertura en archivos de la tarea.
    * **Arquitectura Endurecida:** Las afirmaciones de ejecución y cobertura provenientes del candidato no son confiables. El controlador genera dinámicamente 149 desafíos conductuales ocultos que cubren condiciones de frontera, Unicode y tipos inválidos. El oráculo del controlador evalúa las salidas frente a booleanos esperados mantenidos en memoria.
    * **Alcance Actual:** Restringido al contrato `password-v36` (`require_pytest=false`). La compleción autoritativa de pytest y la ejecución general de pruebas corresponden a etapas futuras de la fábrica.
 4. **`SAST_SCAN` ([`scripts/sast_runner.py`](scripts/sast_runner.py); reglas locales de investigación: `scripts/semgrep_rules.yml`):**
    Ejecuta análisis estático mediante reglas locales versionadas de **Semgrep** y **Bandit**. La invocación del escáner está aislada a módulos del controlador; los errores de herramienta (código de salida 2) fallan en modo cerrado (fail-closed) y detienen el pipeline antes de la auditoría o integración.
 5. **`LOGIC_AUDIT` ([`orchestrator.py`](orchestrator.py), `orchestrator/logic_audit.py` en estado de investigación local, [`adapters/`](adapters/)):**
-   Un auditor LLM independiente verifica que el diff inmutable de Git $B..C$ cumpla estrictamente los invariantes de seguridad (`[SEC-xx]`). Opera bajo una cadena determinista de fallback multi-proveedor (`gemini-3.8-flash` $\to$ `deepseek-flash` $\to$ `qwen3.8-flash` $\to$ `gemini-3.6-flash`) activa únicamente ante fallos de transporte (HTTP 429/503), prohibiendo el model shopping ante un `FAIL` semántico. El modo simulación no puede emitir evidencia de éxito.
+   Un auditor LLM independiente verifica que el diff inmutable de Git `B..C` cumpla estrictamente los invariantes de seguridad (`[SEC-xx]`). Opera bajo una cadena determinista de fallback multi-proveedor (`gemini-3.8-flash` → `deepseek-flash` → `qwen3.8-flash` → `gemini-3.6-flash`) activa únicamente ante fallos de transporte (HTTP 429/503), prohibiendo el model shopping ante un `FAIL` semántico. El modo simulación no puede emitir evidencia de éxito.
 6. **`MERGE_GATE` ([`scripts/merge_gate.py`](scripts/merge_gate.py)):**
-   Ejecuta un Compare-and-Swap (CAS) atómico en la referencia Git ($B \to C$) utilizando `git update-ref`. Exige que la rama base apunte con exactitud a $B$ y que existan los cuatro registros auténticos de evidencia firmados con HMAC en secuencia estricta. (Véase la Regresión Funcional F1 sobre la sincronización del árbol de trabajo).
+   Ejecuta un Compare-and-Swap (CAS) atómico en la referencia Git (B → C) utilizando `git update-ref`. Exige que la rama base apunte con exactitud a B y que existan los cuatro registros auténticos de evidencia firmados con HMAC en secuencia estricta. (Véase la Regresión Funcional F1 sobre la sincronización del árbol de trabajo).
 
 ---
 
@@ -137,7 +112,7 @@ Estados terminales / suspensión: `COMPLETED`, `HALT_HUMAN`, `HUMAN_REVIEW`.
 ### Persistencia Transaccional del Estado
 * **`StateLock`:** Implementa reentrancia intra-proceso (`threading.RLock`) combinada con bloqueo de archivos a nivel de kernel entre procesos (`msvcrt` en Windows, `fcntl.flock` en POSIX).
 * **Reemplazo Atómico:** Toda mutación ocurre exclusivamente a través de `_transaction`, que recarga el estado autoritativo, valida transiciones terminales, incrementa el contador de generación, realiza flush y fsync de archivos temporales y reemplaza atómicamente el archivo de estado.
-* **Testigo de Frescura:** El esquema 36 y un testigo de frescura SHA-256 en el archivo de bloqueo rechazan instantáneas obsoletas y restauraciones hacia atrás (rollback). Las APIs directas `save()`, `_save_unlocked()` y `_write_snapshot()` han sido eliminadas.
+* **Testigo de Frescura:** El esquema 36 y un testigo de frescura SHA-256 en el archivo de bloqueo detectan reintentos de instantáneas de un solo archivo cuando se conserva el testigo. Sin embargo, como demostró el defecto confirmado S1, el testigo no previene la restauración (rollback) o eliminación si tanto el archivo de estado como el de testigo se restauran o eliminan juntos. Las APIs directas `save()`, `_save_unlocked()` y `_write_snapshot()` han sido eliminadas.
 
 ### Mecanismos de Recuperación y Capacidades Opacas
 * **Capacidades Opacas:** Las APIs de recuperación (`validate_strict_recovery`, `can_resume_merge`, `can_resume_audit`, `authorize_recovery`, `execute_merge_recovery_transition`, `execute_audit_recovery_transition`) emiten objetos opacos y vinculados a la generación únicamente tras re-verificar las comprobaciones semánticas, de contexto y de evidencia actuales.
@@ -181,7 +156,7 @@ Para garantizar la máxima disponibilidad ante límites de tasa (HTTP 429) o fal
 En lugar de modificar el árbol de trabajo principal:
 * Cada tarea genera un Git worktree aislado en `.worktrees/wt_<TASK_ID>` enlazado a la rama `task/<TASK_ID>`.
 * Si un Worker genera código defectuoso o viola compuertas, la rama principal permanece limpia e intacta.
-* **Extracción de Candidatos:** El commit candidato $C$ se extrae una sola vez. El manifiesto inmutable deriva el árbol objetivo mediante `<C>^{tree}` y lee objetos Git explícitos.
+* **Extracción de Candidatos:** El commit candidato C se extrae una sola vez. El manifiesto inmutable deriva el árbol objetivo mediante `<C>^{tree}` y lee objetos Git explícitos.
 * **Invariante de Plataforma:** La materialización nativa en Windows rechaza escapes de ruta y falla de forma cerrada antes de crear destinos. (La materialización POSIX relativa a descriptores sin seguimiento y la contención en Docker continúan sin verificación en el entorno de desarrollo Windows).
 
 ---
@@ -217,8 +192,10 @@ El modelo de seguridad aplica cinco invariantes no probabilísticos:
 ```
 
 ### 1. Candidato Inmutable y Contexto de Verificación
-El commit candidato $C$ se selecciona una única vez desde la rama de tarea. El controlador construye un `VerificationContext` inmutable que contiene:
-$$\text{Contexto} = (B, C, \text{tree}, M, \text{spec\_digest}, \text{config\_digest}, \text{policy\_digest})$$
+El commit candidato C se selecciona una única vez desde la rama de tarea. El controlador construye un `VerificationContext` inmutable que contiene:
+```text
+Contexto = (B, C, tree, M, spec_digest, config_digest, policy_digest)
+```
 El contexto se persiste de forma transaccional antes de `DIFF_GATE`. Cada compuerta subsecuente re-verifica que los bytes de especificación, configuración, política e identidades de implementación coincidan con este contexto congelado antes de ejecutarse.
 
 ### 2. Verificación Conductual en el Controlador
@@ -235,11 +212,11 @@ Para prevenir manipulaciones, escapes de sandbox o falsificaciones de reportes d
 
 ### 4. Integración por Compare-and-Swap (CAS) Exacto en Git
 * La integración de código no ejecuta fusiones genéricas sobre el árbol de trabajo.
-* `merge_gate.py` utiliza `git update-ref` para realizar un compare-and-swap atómico ($B \to C$).
+* `merge_gate.py` utiliza `git update-ref` para realizar un compare-and-swap atómico (B → C).
 * El CAS prospera únicamente si:
-  1. La referencia base de la rama continúa apuntando con exactitud al commit base $B$.
+  1. La referencia base de la rama continúa apuntando con exactitud al commit base B.
   2. Los cuatro registros obligatorios de evidencia (`DIFF_GATE`, `TESTING`, `SAST`, `LOGIC_AUDIT`) están presentes, son auténticos, están encadenados por hash y son válidos.
-* Una actualización concurrente de la referencia base provoca el rechazo del CAS, dejando $B$ inalterado.
+* Una actualización concurrente de la referencia base provoca el rechazo del CAS, dejando B inalterado.
 
 ---
 
@@ -258,7 +235,7 @@ Aunque la Ronda 3.6 mejoró sustancialmente el enlace del candidato, la integrac
 * **S5 — Intento Fallido de Recuperación no Consume la Capacidad:** Las capacidades se removían únicamente en la transacción que seguía a la validación estricta. Si la validación fallaba primero, la capacidad permanecía activa y podía ser reutilizada una vez revertida la condición inválida.
 
 ### Regresiones Funcionales y de Recuperación (F1–F3)
-* **F1 — Repositorio Principal Sucio Queda Inconsistente tras CAS:** La recuperación de merge avanza la referencia base $B \to C$ mediante CAS, pero el árbol de trabajo y el índice locales no se sincronizan automáticamente con la punta de la rama.
+* **F1 — Repositorio Principal Sucio Queda Inconsistente tras CAS:** La recuperación de merge avanza la referencia base B → C mediante CAS, pero el árbol de trabajo y el índice locales no se sincronizan automáticamente con la punta de la rama.
 * **F2 — Fallo Semántico de Auditoría Deja la Tarea Varada en Estado Activo:** Si la recuperación de auditoría encuentra un `FAIL` semántico, retorna `False` dejando la tarea varada en `LOGIC_AUDIT/RUNNING` y consumiendo un presupuesto de replanificación.
 * **F3 — Ausencia de Política Explícita para Worktree Preservado Faltante:** La recuperación estricta valida un worktree solo si este existe, permitiendo que la recuperación prospere incluso tras ser eliminado.
 

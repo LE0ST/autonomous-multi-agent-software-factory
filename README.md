@@ -39,53 +39,28 @@ Most contemporary multi-agent coding systems encounter critical failure modes wh
 
 ```mermaid
 flowchart TD
-    Start([Start: TASK-XXX]) --> INIT[INIT: Load Config, FSM & StateLock]
-    INIT --> SPEC_GATE{SPEC GATE<br/>Exists and valid?}
-    
-    SPEC_GATE -- No / Missing --> ARCHITECT[ARCHITECT: Gemini 3.8 Flash<br/>Generates tabular SPEC]
-    ARCHITECT --> SPEC_GATE
-    
-    SPEC_GATE -- Passed --> WORKTREE[Isolation: Git Worktree<br/>.worktrees/wt_TASK-XXX]
-    WORKTREE --> WORKER[WORKER: DeepSeek Flash<br/>Generates code & tests]
-    
-    WORKER --> DIFF_GATE{DIFF GATE<br/>Respects file boundaries?<br/>B..C diff against SPEC}
-    DIFF_GATE -- Violation --> REVERT_DIFF[Revert changes] --> REPLAN_SEC{Security replan budget?}
-    
-    DIFF_GATE -- Passed --> TESTING{TEST RUNNER<br/>Controller Hidden Challenges<br/>Password-v36 Oracle}
-    TESTING -- Test Failure --> TRIAGE[TRIAGE: Gemini 3.5 Flash Lite<br/>Diagnoses root cause]
-    TRIAGE --> RETRY_EPOCH{Retries left in epoch?}
-    RETRY_EPOCH -- Yes --> WORKER
-    RETRY_EPOCH -- No --> REPLAN_LOG{Logic replan budget?}
-    REPLAN_LOG -- Available --> NEW_EPOCH[New Epoch] --> WORKER
-    REPLAN_LOG -- Exhausted --> HALT_HUMAN[HALT_HUMAN: Circuit Breaker]
-    
-    TESTING -- Passed --> SAST{SAST SCAN<br/>Semgrep local rules + Bandit<br/>Fail-closed on exit 2}
-    SAST -- Critical Findings --> SAST_FILTER[SECURITY FILTER: Gemini<br/>Filters false positives]
-    SAST_FILTER -- Confirmed Vulnerability --> REPLAN_SEC
-    REPLAN_SEC -- Available --> NEW_EPOCH
-    REPLAN_SEC -- Exhausted --> HALT_HUMAN
-    
-    SAST -- Clean --> LOGIC_AUDIT{LOGIC SECURITY AUDIT<br/>Multi-provider fallback chain<br/>Immutable B..C diff}
-    LOGIC_AUDIT -- Availability failure (429/503) --> FALLBACK{Fallback candidate?<br/>Gemini -> DeepSeek -> Qwen -> Gemini 3.6}
-    FALLBACK -- Next candidate available --> LOGIC_AUDIT
-    FALLBACK -- Exhausted --> HUMAN_REVIEW[HUMAN REVIEW<br/>Safe pause without budget penalty]
-    LOGIC_AUDIT -- Invariant Violated (FAIL) --> REPLAN_SEC
-    
-    HUMAN_REVIEW -. --resume-audit (Opaque capability) .-> LOGIC_AUDIT
-
-    LOGIC_AUDIT -- Passed --> AUTO_MERGE{AUTO MERGE<br/>merge_gate.py: Atomic CAS B -> C<br/>Requires 4 authentic evidence records}
-    AUTO_MERGE -- Dirty / Diverged Tree --> HALT_MERGE[HALT_HUMAN: Safe lock]
-    AUTO_MERGE -- Success CAS --> COMPLETED([COMPLETED: Task Finished])
-    
-    HALT_MERGE -. Resolve externally .-> RESUME[--resume-merge<br/>Atomic recovery without LLMs]
-    RESUME --> AUTO_MERGE
+    Task["Task: TASK-XXX"] --> Architect["Architect: Gemini 3.8 Flash"]
+    Architect --> SPEC_GATE{"SPEC_GATE: Contract Validation"}
+    SPEC_GATE --> Worktree["Isolation: Git Worktree"]
+    Worktree --> Worker["Worker: DeepSeek Flash"]
+    Worker --> DIFF_GATE{"DIFF_GATE: Boundary Check"}
+    DIFF_GATE --> TESTING{"TESTING: Test Verification"}
+    TESTING --> SAST_SCAN{"SAST_SCAN: Semgrep & Bandit"}
+    SAST_SCAN --> LOGIC_AUDIT{"LOGIC_AUDIT: LLM Security Audit"}
+    LOGIC_AUDIT --> EvidenceVerification{"Evidence Verification"}
+    EvidenceVerification --> CAS{"Git CAS: Ref B to C"}
+    CAS --> COMPLETED(["COMPLETED: Task Finished"])
 ```
 
 > [!NOTE]
 > **Evolution from Published Baseline to Hardened Architecture:**
-> * **`TESTING` Gate:** In the published baseline commit (`c5fd13c`), testing relied on client-side `pytest` and coverage reports. In the hardened pipeline, candidate-provided pytest outputs are treated as an untrusted channel. Verification is performed by controller-side hidden challenges (currently restricted to the `password-v36` behavioral contract) with exact boolean evaluation.
-> * **`AUTO_MERGE` Gate:** In the published baseline commit, integration was performed by `git merge --ff-only` on the checked-out worktree. In the hardened pipeline, integration is executed via an atomic Git ref Compare-and-Swap (`git update-ref` CAS $B \to C$), requiring four chained HMAC-signed evidence records. (See Functional Regression F1 regarding worktree synchronization).
-> * **Recovery:** Recovery pathways (`--resume-merge`, `--resume-audit`) are governed by opaque, generation-bound capabilities intended to be strictly one-use (subject to confirmed defect S5).
+> * **Essential Pipeline Flow:** The diagram illustrates the linear verification sequence. Error paths (diff reversion on boundary violations, triage diagnosis loops on test failures, security replanning on confirmed SAST/audit findings, and circuit-breaker halts) are governed by strict execution budgets in prose and configuration.
+> * **Published Baseline vs. Local Development:** In the published baseline commit (`c5fd13c`), `TESTING` executed client-side pytest with coverage reports, and integration was performed by `git merge --ff-only` on the worktree. In the newer local development state (not yet published), `TESTING` evaluates controller-side hidden challenges (restricted to the `password-v36` contract), and integration is executed via an atomic Git ref Compare-and-Swap (`git update-ref` CAS B → C).
+> * **Human Review & Recovery:** Tasks suspended at `LOGIC_AUDIT` due to transient upstream availability failures (HTTP 429/503) enter `HUMAN_REVIEW` without budget consumption, recoverable via `--resume-audit`. Tasks halted at `AUTO_MERGE` can be recovered via `--resume-merge`. Recovery tokens are intended to be strictly one-use (subject to confirmed defect S5).
+> * **Remaining Security Limitations:**
+>   - **S2 Unresolved:** Signed evidence confirms record integrity and sequence, but does not prove concrete gate execution (`_record_success` accepts caller-supplied gate names).
+>   - **S1 Unresolved:** The local freshness witness does not prevent paired state and witness rollback or deletion when directory permissions permit modification.
+>   - **F1 Worktree Gap:** Ref-only CAS advances the branch tip but does not automatically synchronize the main worktree.
 
 ---
 
@@ -107,19 +82,19 @@ flowchart TD
    Validates required sections, unambiguous Acceptance Criteria (`[AC-xx]`), Security Invariants (`[SEC-xx]`), explicit file boundary whitelists (`Allowed files` / `Forbidden files`), and 1:1 traceability in the Test Matrix before code generation.
 2. **`DIFF_GATE` ([`scripts/diff_gate.py`](scripts/diff_gate.py)):**
    Inspects `git diff B..C` against the frozen specification. Strictly enforces set-theoretic file boundaries:
-   - $\text{modified\_files} \subseteq \text{allowed\_files}$
-   - $\text{forbidden\_files} \cap \text{modified\_files} = \emptyset$
+   - `modified_files ⊆ allowed_files`
+   - `forbidden_files ∩ modified_files = ∅`
    Blocks modifications to root infrastructure files (`pyproject.toml`, `.env*`, `RULES.md`, `orchestrator/`, `scripts/`).
 3. **`TESTING` / Behavioral Verification ([`scripts/test_runner.py`](scripts/test_runner.py); local research suite: `trusted_tests/suite.py`):**
-   * **Published Baseline:** Ran `pytest` with $\ge 85\%$ line coverage on task files.
+   * **Published Baseline:** Ran `pytest` with ≥ 85% line coverage on task files.
    * **Hardened Architecture:** Candidate-reported pytest execution and coverage claims are untrusted. The controller generates 149 hidden behavioral challenges across boundary conditions, Unicode, and invalid types. The controller oracle evaluates candidate outputs against in-memory expected booleans.
    * **Current Scope:** Restricted to the `password-v36` contract (`require_pytest=false`). Pytest completion and general test execution remain general-purpose factory work.
 4. **`SAST_SCAN` ([`scripts/sast_runner.py`](scripts/sast_runner.py); local research rules: `scripts/semgrep_rules.yml`):**
    Executes static application security testing using local versioned **Semgrep** rules and **Bandit**. Scanner invocation is isolated to controller modules; tool errors (exit code 2) fail closed and halt the pipeline before audit or merge.
 5. **`LOGIC_AUDIT` ([`orchestrator.py`](orchestrator.py), `orchestrator/logic_audit.py` in local research state, [`adapters/`](adapters/)):**
-   An independent LLM auditor verifies that the immutable Git diff $B..C$ strictly satisfies all stated security invariants (`[SEC-xx]`). Protected by a deterministic multi-provider fallback chain (`gemini-3.8-flash` $\to$ `deepseek-flash` $\to$ `qwen3.8-flash` $\to$ `gemini-3.6-flash`) activating strictly on provider availability failures (HTTP 429/503), strictly rejecting model shopping on semantic `FAIL`. Simulation mode cannot issue success evidence.
+   An independent LLM auditor verifies that the immutable Git diff `B..C` strictly satisfies all stated security invariants (`[SEC-xx]`). Protected by a deterministic multi-provider fallback chain (`gemini-3.8-flash` → `deepseek-flash` → `qwen3.8-flash` → `gemini-3.6-flash`) activating strictly on provider availability failures (HTTP 429/503), strictly rejecting model shopping on semantic `FAIL`. Simulation mode cannot issue success evidence.
 6. **`MERGE_GATE` ([`scripts/merge_gate.py`](scripts/merge_gate.py)):**
-   Executes an atomic Git ref Compare-and-Swap (CAS) ($B \to C$) using `git update-ref`. Requires that the repository base reference still matches $B$ and that four valid, authentic HMAC-signed evidence records exist in exact sequence. (See Functional Regression F1 regarding worktree synchronization).
+   Executes an atomic Git ref Compare-and-Swap (CAS) (B → C) using `git update-ref`. Requires that the repository base reference still matches `B` and that four valid, authentic HMAC-signed evidence records exist in exact sequence. (See Functional Regression F1 regarding worktree synchronization).
 
 ---
 
@@ -137,7 +112,7 @@ Terminal / suspension states: `COMPLETED`, `HALT_HUMAN`, `HUMAN_REVIEW`.
 ### Transactional State Persistence
 * **`StateLock`:** Implements intra-process reentrancy (`threading.RLock`) combined with inter-process kernel-level file locking (`msvcrt` on Windows, `fcntl.flock` on POSIX).
 * **Atomic Replacement:** State modifications occur exclusively via `_transaction`, which reloads authoritative state, validates terminal transitions, increments generation counters, flushes and fsyncs temporary files, and atomically replaces the state file.
-* **Freshness Witness:** Schema 36 and a persistent lockfile SHA-256 freshness witness prevent stale snapshot loading and full-snapshot rollbacks. Direct `save()`, `_save_unlocked()`, and `_write_snapshot()` APIs have been removed.
+* **Freshness Witness:** Schema 36 and a persistent lockfile SHA-256 freshness witness detect single-file snapshot replays when the witness is retained. However, as demonstrated by confirmed defect S1, the witness does not prevent rollback or deletion if both state and witness files are restored or removed together. Direct `save()`, `_save_unlocked()`, and `_write_snapshot()` APIs have been removed.
 
 ### Recovery Mechanics & Capability Tokens
 * **Opaque Capabilities:** Recovery APIs (`validate_strict_recovery`, `can_resume_merge`, `can_resume_audit`, `authorize_recovery`, `execute_merge_recovery_transition`, `execute_audit_recovery_transition`) issue opaque, per-instance, generation-bound objects only after re-verifying current semantic, context, and evidence checks.
@@ -181,7 +156,7 @@ To ensure maximum availability against upstream API rate limits (HTTP 429) and t
 Rather than performing file operations in the main working tree:
 * Each task generates an isolated Git worktree at `.worktrees/wt_<TASK_ID>` linked to branch `task/<TASK_ID>`.
 * If a Worker introduces broken code, unformatted files, or gate violations, the main branch remains clean and untouched.
-* **Candidate Extraction:** The candidate commit $C$ is extracted once. The immutable manifest derives the target tree using `<C>^{tree}` and reads explicit Git objects.
+* **Candidate Extraction:** The candidate commit C is extracted once. The immutable manifest derives the target tree using `<C>^{tree}` and reads explicit Git objects.
 * **Platform Invariant:** Native Windows materialization rejects path traversals and fails closed before creating destinations. (Live POSIX descriptor-relative materialization and Docker containment remain unverified on the Windows development host).
 
 ---
@@ -217,8 +192,10 @@ The security model enforces five non-probabilistic invariants:
 ```
 
 ### 1. Immutable Candidate & Verification Context
-The candidate commit $C$ is selected once from the task branch. The controller constructs an immutable `VerificationContext` containing:
-$$\text{Context} = (B, C, \text{tree}, M, \text{spec\_digest}, \text{config\_digest}, \text{policy\_digest})$$
+The candidate commit C is selected once from the task branch. The controller constructs an immutable `VerificationContext` containing:
+```text
+Context = (B, C, tree, M, spec_digest, config_digest, policy_digest)
+```
 The context is written transactionally before `DIFF_GATE`. Each subsequent gate re-verifies that current repository specification, configuration, policy bytes, and implementation identities match this frozen context before execution.
 
 ### 2. Controller-Side Behavioral Verification
@@ -235,11 +212,11 @@ To prevent candidate tampering, sandbox escape, or forged test reports:
 
 ### 4. Exact Git Compare-and-Swap (CAS) Integration
 * Code integration does not execute generic working-tree merges.
-* `merge_gate.py` uses `git update-ref` to perform an atomic compare-and-swap ($B \to C$).
+* `merge_gate.py` uses `git update-ref` to perform an atomic compare-and-swap (B → C).
 * CAS succeeds only if:
-  1. The target branch reference still points exactly to base commit $B$.
+  1. The target branch reference still points exactly to base commit B.
   2. All four mandatory gate evidence records (`DIFF_GATE`, `TESTING`, `SAST`, `LOGIC_AUDIT`) are present, authentic, hash-chained, and valid.
-* A concurrent base ref update causes CAS to reject, leaving $B$ untouched.
+* A concurrent base ref update causes CAS to reject, leaving B untouched.
 
 ---
 
@@ -258,7 +235,7 @@ While Round 3.6 materially improved candidate binding, CAS integration, and tran
 * **S5 — Failed Recovery Attempt Does Not Consume Capability:** Capability tokens were removed only around the transaction following strict recovery validation. If validation failed first, the capability remained active and could be reused once invalid conditions were reverted.
 
 ### Functional and Recovery Regressions (F1–F3)
-* **F1 — Dirty Main Repository Left Inconsistent After Ref-Only CAS:** Authentic merge recovery advances the base ref $B \to C$ via CAS, but the checked-out worktree and index are not automatically synchronized to the new branch tip.
+* **F1 — Dirty Main Repository Left Inconsistent After Ref-Only CAS:** Authentic merge recovery advances the base ref B → C via CAS, but the checked-out worktree and index are not automatically synchronized to the new branch tip.
 * **F2 — Audit Semantic Failure Strands Task in Active State:** If authorized audit recovery encounters a semantic `FAIL`, it returns `False` while leaving the task stranded in `LOGIC_AUDIT/RUNNING` and consuming a replan budget.
 * **F3 — Missing Preserved Worktree Lacks Explicit Policy:** Strict recovery validates a worktree only if it exists, allowing recovery to succeed even after a preserved worktree is removed.
 
