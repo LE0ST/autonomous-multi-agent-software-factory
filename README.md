@@ -13,8 +13,8 @@ English | [Español](README_ES.md)
 
 > [!WARNING]
 > **Experimental Research Project & Security Audit Status Notice:**
-> * **Published Baseline Commit (`c5fd13c`):** Represents the initial portfolio release containing 202 unit/integration tests, heuristic verification gates, and fast-forward worktree integration.
-> * **Current Local Development State (not yet published):** Incorporates extensive security hardening from Round 3.6 (immutable verification context, controller-side hidden challenges, HMAC evidence chaining, and atomic Git Compare-and-Swap ref updates) and Round 3.7 Stage 1 test-and-freeze (50 frozen acceptance tests across 8 test suites).
+> * **Published Baseline Commit (`c5fd13c`):** Represents the initial published baseline containing 202 unit/integration tests, heuristic verification gates, and fast-forward worktree integration.
+> * **Current Local Development State (not yet published):** Incorporates extensive security hardening from Round 3.6 (immutable verification context, controller-side hidden challenges, HMAC evidence chaining, and atomic Git Compare-and-Swap ref updates) and Round 3.7 Stage 1 test-and-freeze (50 frozen acceptance cases across six test files and two supporting Python files).
 > * **Security Remediation Pending:** An independent security audit concluded that Round 3.6 does **not** receive a security PASS, confirming five security defects (S1–S5) and three functional regressions (F1–F3). Stage 1 established **31 genuine FAIL-before acceptance cases and 19 passing controls**. Production code remains unchanged from Round 3.6; **production security remediation remains pending**.
 
 ---
@@ -262,8 +262,8 @@ While Round 3.6 materially improved candidate binding, CAS integration, and tran
 * **F2 — Audit Semantic Failure Strands Task in Active State:** If authorized audit recovery encounters a semantic `FAIL`, it returns `False` while leaving the task stranded in `LOGIC_AUDIT/RUNNING` and consuming a replan budget.
 * **F3 — Missing Preserved Worktree Lacks Explicit Policy:** Strict recovery validates a worktree only if it exists, allowing recovery to succeed even after a preserved worktree is removed.
 
-### Round 3.7 Stage 1 Checkpoint (Frozen Acceptance Suites)
-To establish an unassailable baseline before production code remediation, Stage 1 implemented and froze 50 acceptance test cases across eight test files (`tests/security_acceptance/ROUND37_FROZEN_SHA256.txt`):
+### Round 3.7 Stage 1 Checkpoint (Frozen Acceptance Cases)
+To establish an unassailable baseline before production code remediation, Stage 1 implemented and froze 50 acceptance cases across six test files and two supporting Python files (`tests/security_acceptance/ROUND37_FROZEN_SHA256.txt`):
 * **Baseline Reproduction:** 16 diagnostic reproduction cases passed in 198.82s.
 * **Secure Acceptance Execution:** **31 genuine FAIL-before assertion failures and 19 passing controls** (0 errors, 0 skips, 0 xfails across 50 cases).
 * **Production Status:** **Production security remediation remains pending.** No production code fixes have been applied; production code remains identical to Round 3.6.
@@ -430,7 +430,7 @@ The test suite reflects three distinct phases of repository development:
 │   │   ├── ROUND36_FROZEN_SHA256.txt       # Round 3.6 frozen acceptance manifest
 │   │   ├── ROUND37_FROZEN_SHA256.txt       # Round 3.7 Stage 1 frozen manifest (50 tests)
 │   │   ├── round36/                        # 8 frozen Round 3.6 acceptance test suites
-│   │   └── round37/                        # 6 frozen Round 3.7 acceptance test suites
+│   │   └── round37/                        # 6 frozen Round 3.7 test files & 2 supporting files (50 cases)
 │   ├── test_audit_fallback.py
 │   ├── test_authorization_policy.py
 │   ├── test_diff_gate.py

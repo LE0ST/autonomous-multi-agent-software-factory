@@ -13,8 +13,8 @@
 
 > [!WARNING]
 > **Aviso de Proyecto Experimental de Investigación y Estado de Auditoría de Seguridad:**
-> * **Commit Base Publicado (`c5fd13c`):** Representa el release inicial de portafolio que contiene 202 pruebas unitarias y de integración, compuertas de verificación heurísticas e integración Fast-Forward en el worktree.
-> * **Estado Actual de Desarrollo Local (aún no publicado):** Incorpora un extenso endurecimiento de seguridad derivado de la Ronda 3.6 (contexto de verificación inmutable, desafíos ocultos evaluados en el controlador, encadenamiento de evidencia HMAC y actualizaciones atómicas de referencias Git mediante Compare-and-Swap) y el punto de control de la Ronda 3.7 Etapa 1 (50 pruebas de aceptación congeladas en 8 suites).
+> * **Commit Base Publicado (`c5fd13c`):** Representa la versión pública inicial que contiene 202 pruebas unitarias y de integración, compuertas de verificación heurísticas e integración Fast-Forward en el worktree.
+> * **Estado Actual de Desarrollo Local (aún no publicado):** Incorpora un extenso endurecimiento de seguridad derivado de la Ronda 3.6 (contexto de verificación inmutable, desafíos ocultos evaluados en el controlador, encadenamiento de evidencia HMAC y actualizaciones atómicas de referencias Git mediante Compare-and-Swap) y el punto de control de la Ronda 3.7 Etapa 1 (50 casos de aceptación congelados en seis archivos de pruebas y dos archivos auxiliares de Python).
 > * **Remediación de Seguridad Pendiente:** Una auditoría de seguridad independiente concluyó que la Ronda 3.6 **no** recibe aprobación de seguridad (Security PASS), confirmando cinco defectos de seguridad (S1–S5) y tres regresiones funcionales (F1–F3). La Etapa 1 estableció **31 casos genuinos de fallo previo (FAIL-before) y 19 controles aprobados**. El código de producción permanece sin modificaciones respecto a la Ronda 3.6; **la remediación de seguridad en producción continúa pendiente**.
 
 ---
@@ -262,8 +262,8 @@ Aunque la Ronda 3.6 mejoró sustancialmente el enlace del candidato, la integrac
 * **F2 — Fallo Semántico de Auditoría Deja la Tarea Varada en Estado Activo:** Si la recuperación de auditoría encuentra un `FAIL` semántico, retorna `False` dejando la tarea varada en `LOGIC_AUDIT/RUNNING` y consumiendo un presupuesto de replanificación.
 * **F3 — Ausencia de Política Explícita para Worktree Preservado Faltante:** La recuperación estricta valida un worktree solo si este existe, permitiendo que la recuperación prospere incluso tras ser eliminado.
 
-### Punto de Control de la Ronda 3.7 Etapa 1 (Suites de Aceptación Congeladas)
-Para establecer una línea base incontrovertible antes de modificar el código productivo, la Etapa 1 implementó y congeló 50 casos de prueba de aceptación en ocho archivos (`tests/security_acceptance/ROUND37_FROZEN_SHA256.txt`):
+### Punto de Control de la Ronda 3.7 Etapa 1 (Casos de Aceptación Congelados)
+Para establecer una línea base incontrovertible antes de modificar el código productivo, la Etapa 1 implementó y congeló 50 casos de aceptación en seis archivos de pruebas y dos archivos auxiliares de Python (`tests/security_acceptance/ROUND37_FROZEN_SHA256.txt`):
 * **Reproducción de la Línea Base:** 16 casos de reproducción diagnóstica aprobados en 198.82s.
 * **Ejecución de Aceptación Segura:** **31 fallos genuinos de aserción (FAIL-before) y 19 controles aprobados** (0 errores, 0 omisiones, 0 xfails en 50 casos).
 * **Estado de Producción:** **La remediación de seguridad en producción continúa pendiente.** No se han aplicado correcciones en el código productivo; este permanece idéntico a la Ronda 3.6.
@@ -430,7 +430,7 @@ La suite de pruebas refleja tres etapas distintas del desarrollo del repositorio
 │   │   ├── ROUND36_FROZEN_SHA256.txt       # Manifiesto congelado Ronda 3.6
 │   │   ├── ROUND37_FROZEN_SHA256.txt       # Manifiesto congelado Ronda 3.7 Etapa 1 (50 tests)
 │   │   ├── round36/                        # 8 suites de aceptación congeladas Ronda 3.6
-│   │   └── round37/                        # 6 suites de aceptación congeladas Ronda 3.7
+│   │   └── round37/                        # 6 archivos de prueba congelados y 2 auxiliares (50 casos)
 │   ├── test_audit_fallback.py
 │   ├── test_authorization_policy.py
 │   ├── test_diff_gate.py
