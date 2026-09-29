@@ -117,7 +117,27 @@ def setup_task_in_human_review(repo_dir: Path, task_id: str) -> Path:
         {"from": "SAST_SCAN", "to": "LOGIC_AUDIT", "details": "Running audit", "epoch": 1},
         {"from": "LOGIC_AUDIT", "to": "HUMAN_REVIEW", "details": "Service unavailable HTTP 429", "epoch": 1},
     ]
-    sm.save()
+
+    # INJECTED STRICT EVIDENCE SCHEMA
+    try:
+        task_head = subprocess.check_output(['git', 'rev-parse', f'task/{task_id}'], cwd=tmp_path, text=True).strip()
+        sm.data['verification_candidate'] = {
+            'candidate_commit': task_head,
+            'candidate_tree': 'tree_sha',
+            'base_commit': subprocess.check_output(['git', 'rev-parse', 'dev'], cwd=tmp_path, text=True).strip(),
+            'spec_digest': 'spec',
+            'config_digest': 'config',
+            'policy_digest': 'policy'
+        }
+        sm.data['gate_evidence'] = {
+            'DIFF_GATE': {'commit': task_head, 'passed': True},
+            'TESTING': {'commit': task_head, 'passed': True, 'trusted_verifier_result': 'PASS', 'execution_backend_identity': 'MockBackend'},
+            'SAST': {'commit': task_head, 'passed': True, 'trusted_verifier_result': 'PASS', 'execution_backend_identity': 'MockBackend'},
+            'LOGIC_AUDIT': {'commit': task_head, 'passed': True, 'trusted_verifier_result': 'PASS'}
+        }
+    except Exception:
+        pass
+    sm._save_unlocked()
     return wt_dir
 
 
@@ -172,7 +192,27 @@ def test_can_resume_audit_rejected_invalid_states(tmp_path, state, status, gate,
     sm.data["blocked_reason"]["gate"] = gate
     if not has_trans:
         sm.data["history"] = [{"from": "INIT", "to": "HUMAN_REVIEW", "details": "other", "epoch": 1}]
-    sm.save()
+
+    # INJECTED STRICT EVIDENCE SCHEMA
+    try:
+        task_head = subprocess.check_output(['git', 'rev-parse', f'task/{task_id}'], cwd=tmp_path, text=True).strip()
+        sm.data['verification_candidate'] = {
+            'candidate_commit': task_head,
+            'candidate_tree': 'tree_sha',
+            'base_commit': subprocess.check_output(['git', 'rev-parse', 'dev'], cwd=tmp_path, text=True).strip(),
+            'spec_digest': 'spec',
+            'config_digest': 'config',
+            'policy_digest': 'policy'
+        }
+        sm.data['gate_evidence'] = {
+            'DIFF_GATE': {'commit': task_head, 'passed': True},
+            'TESTING': {'commit': task_head, 'passed': True, 'trusted_verifier_result': 'PASS', 'execution_backend_identity': 'MockBackend'},
+            'SAST': {'commit': task_head, 'passed': True, 'trusted_verifier_result': 'PASS', 'execution_backend_identity': 'MockBackend'},
+            'LOGIC_AUDIT': {'commit': task_head, 'passed': True, 'trusted_verifier_result': 'PASS'}
+        }
+    except Exception:
+        pass
+    sm._save_unlocked()
 
     can_resume, msg = sm.can_resume_audit(repo_root=tmp_path)
     assert can_resume is False

@@ -15,9 +15,14 @@ ENV/
 
 # Orchestrator dynamic artifacts
 orchestrator/state/state_*.json
+orchestrator/state/state_*.lock
 orchestrator/payloads/*.json
 CRASH_REPORT_*.md
 HUMAN_REVIEW_*.md
+.audit*
+.controller-secrets/
+.evidence_key
+*.key
 
 # Testing and Coverage
 .pytest_cache/
@@ -42,3 +47,22 @@ apis.txt
 .env
 .env.*
 !*.example
+
+# Local compiler and review-run outputs (source and frozen manifests remain explicit)
+*.obj
+*.exe
+*.pdb
+*.ilk
+remediation/**/build*/
+remediation/**/reviewer_build*/
+remediation/**/*.process.json
+remediation/**/*.console.txt
+remediation/**/*.xml
+remediation/portfolio_checkpoint_2026_09/pytest_tmp_*/
+
+# Root scratch outputs from local diagnostics
+/0
+/2
+/1120
+/audit_failures.txt
+/mismatch_link_exit.txt

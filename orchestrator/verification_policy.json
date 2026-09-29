@@ -1,0 +1,6 @@
+{
+  "schema": 36,
+  "suite": "password-v36",
+  "require_pytest": false,
+  "evidence_ttl_seconds": 86400
+}

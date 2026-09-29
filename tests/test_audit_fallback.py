@@ -25,6 +25,7 @@ Covers:
 
 import json
 import os
+import hashlib
 import subprocess
 from pathlib import Path
 import pytest
@@ -45,8 +46,8 @@ _spec = importlib.util.spec_from_file_location("orchestrator_app", Path(__file__
 _mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
 
-create_security_adapter = _mod.create_security_adapter
 execute_logic_security_audit = _mod.execute_logic_security_audit
+create_security_adapter = _mod.create_security_adapter
 resume_audit = _mod.resume_audit
 
 DEFAULT_FALLBACK_CONFIG = {
@@ -70,6 +71,12 @@ def setup_test_state_and_spec(tmp_path: Path, task_id: str):
     spec_path.write_text(f"# {task_id}\n\n[SEC-01] Test security invariant.\n", encoding="utf-8")
 
     sm = StateManager(task_id, state_dir=str(state_dir), raise_on_halt=False)
+    sm.transition("SPEC_DESIGN", "design")
+    sm.transition("SPEC_GATE", "gate")
+    sm.transition("BUILDING", "building")
+    sm.transition("DIFF_GATE", "diff")
+    sm.transition("TESTING", "testing")
+    sm.transition("SAST_SCAN", "sast")
     sm.transition("LOGIC_AUDIT", "Starting audit...")
     return sm, spec_path
 
@@ -605,11 +612,27 @@ def test_14_and_15_resume_audit_with_fallback_and_zero_unrelated_calls(tmp_path,
         {"from": "BUILDING", "to": "LOGIC_AUDIT", "details": "", "epoch": 1},
         {"from": "LOGIC_AUDIT", "to": "HUMAN_REVIEW", "details": "429 rate limit", "epoch": 1}
     ]
-    sm.save()
+
+    task_head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=wt_dir, text=True).strip()
+    spec_file = tmp_path / "specs" / f"{task_id}.md"
+    sm.data["verification_candidate"] = {
+        "candidate_commit": task_head,
+        "candidate_tree": subprocess.check_output(["git", "rev-parse", f"{task_head}^{{tree}}"], cwd=wt_dir, text=True).strip(),
+        "base_commit": subprocess.check_output(["git", "rev-parse", "refs/heads/dev"], cwd=tmp_path, text=True).strip(),
+        "spec_digest": hashlib.sha256(spec_file.read_bytes()).hexdigest(),
+        "config_digest": hashlib.sha256((tmp_path / "orchestrator" / "config.json").read_bytes()).hexdigest(),
+        "policy_digest": ""
+    }
+    sm.data["gate_evidence"] = {
+        "DIFF_GATE": {"commit": task_head, "passed": True},
+        "TESTING": {"commit": task_head, "passed": True},
+        "SAST": {"commit": task_head, "passed": True},
+    }
+    sm._save_unlocked()
 
     # Track calls to ensure zero calls to unrelated agents
     unrelated_calls = []
-    monkeypatch.setattr(_mod, "run_tests", lambda *a, **kw: unrelated_calls.append("run_tests"))
+    monkeypatch.setattr(_mod, "TestSupervisor", lambda *a, **kw: unrelated_calls.append("TestSupervisor"))
     monkeypatch.setattr(_mod, "run_sast", lambda *a, **kw: unrelated_calls.append("run_sast"))
     monkeypatch.setattr(_mod, "validate_spec", lambda *a, **kw: unrelated_calls.append("validate_spec"))
     monkeypatch.setattr(_mod, "validate_diff", lambda *a, **kw: unrelated_calls.append("validate_diff"))

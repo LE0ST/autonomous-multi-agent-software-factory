@@ -1,0 +1,13 @@
+# Independent Windows SnapshotSession source review
+
+**Decision: B — One fail-closed native-object correction and focused enumeration tests are required before the next bounded G1 source-preparation step.**
+
+The adapter’s root, ancestor, state-directory, and child open profiles match the accepted contracts. It uses handle-relative single-component `NtCreateFile` opens with the specified access/share/disposition/options, rejects reparse points, retains the handle chain, checks identities and descriptors from open handles, and has no path reopen, relaxed-share retry, or privilege enablement. The installed Windows SDK declarations agree with the implementation. The initial `ERROR_FILE_NOT_FOUND` completion mapping corresponds to first-query `STATUS_NO_SUCH_FILE`; other query errors stop inconclusively.
+
+There is one source-level type gap: `WindowsSession::inventory()` classifies every non-directory, non-reparse record as `regular` without rejecting `FILE_ATTRIBUTE_DEVICE`. `SystemNativeCalls::inspect()` and `require_child()` likewise do not reject that reserved enumeration attribute. A device-marked entry can therefore enter the child-open/read path even though the accepted snapshot contract requires regular files. Reject this attribute in both the directory record and held-handle metadata path, and add an injected test proving it stops inconclusively.
+
+The tests also do not exercise the actual `FILE_ID_EXTD_DIR_INFO` buffer parser in `SystemNativeCalls::next_page()`: `FakeNativeCalls` supplies already-decoded pages. There is no duplicate-name test, despite duplicate rejection being present in the implementation. Before proceeding, factor the bounded record parser behind a test seam and cover valid multi-record alignment plus malformed/truncated headers, names, and `NextEntryOffset`; add duplicate-entry and device-attribute stop cases. These are synthetic source tests and must remain labelled as such.
+
+The 38 SHA-256 records all match. Independent MinGW and MSVC x64 rebuilds both exited 0 and each produced `PASS 2052 Windows adapter synthetic checks; no native fixture open attempted`; the decoded stdout is byte-identical to Sol’s recorded output. The accepted pure suite was rerun under both toolchains and passed 133 checks. Build and provenance detail is in [BUILD_TEST_PROVENANCE.md](BUILD_TEST_PROVENANCE.md).
+
+This is not approval to open a native fixture or make host observations. It grants no G1 approval, Stage A PASS, S1 PASS, or Round 3.7 PASS. The remaining source findings and the bounded correction are detailed in [NATIVE_API_AND_IDENTITY_FINDINGS.md](NATIVE_API_AND_IDENTITY_FINDINGS.md), [ENUMERATION_AND_SHARING_FINDINGS.md](ENUMERATION_AND_SHARING_FINDINGS.md), and [NEXT_G1_SOURCE_STEP.md](NEXT_G1_SOURCE_STEP.md).

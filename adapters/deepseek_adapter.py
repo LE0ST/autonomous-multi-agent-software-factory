@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Optional
 from .contracts import LogicAuditOutput
 from .network_retry import retry_with_backoff
+from scripts.file_policy import safe_atomic_write
+from scripts.diff_gate import parse_spec_boundaries_content
 
 def clean_code_block(content: str) -> str:
     """Clean Markdown code block fences (```python ... ```) and residual whitespace."""
@@ -23,16 +25,22 @@ def clean_code_block(content: str) -> str:
         
     return "\n".join(lines).strip() + "\n"
 
-def extract_and_write_files(raw_response: str, worktree_path: Path) -> list[str]:
+def extract_and_write_files(
+    raw_response: str,
+    worktree_path: Path,
+    allowed: list[str] | None = None,
+    forbidden: list[str] | None = None,
+) -> list[str]:
     """
-    Robustly extract files from Worker response text and write them into the worktree.
+    Robustly extract files from Worker response text and write them into the worktree
+    enforcing model filesystem policy and atomic writes.
     Supports:
       1. JSON format: {"files": [{"path": "...", "content": "..."}]}
       2. Header-delimited format: ### FILE: <path> \n ```python \n ... ```
       3. Tagged blocks: File: `<path>` \n ``` ... ```
     """
-    written_files = []
-    
+    extracted_items: list[tuple[str, str]] = []
+
     # 1. Attempt direct JSON parsing (extracting between first { and last })
     first_brace = raw_response.find("{")
     last_brace = raw_response.rfind("}")
@@ -45,45 +53,45 @@ def extract_and_write_files(raw_response: str, worktree_path: Path) -> list[str]
                     rel_path = item.get("path", "").strip().replace("\\", "/").lstrip("/")
                     content = clean_code_block(item.get("content", ""))
                     if rel_path:
-                        dest = worktree_path / rel_path
-                        dest.parent.mkdir(parents=True, exist_ok=True)
-                        dest.write_text(content, encoding="utf-8")
-                        written_files.append(rel_path)
-                if written_files:
-                    return written_files
+                        extracted_items.append((rel_path, content))
         except Exception:
             pass
 
     # 2. Parse blocks delimited by FILE / Archivo
-    file_block_regex = re.compile(
-        r"(?:###|##|\*\*|---\s*\n)?\s*(?:FILE|ARCHIVO|File|Archivo)\s*[:\`]?\s*([a-zA-Z0-9_\-\./\\]+\.[a-zA-Z0-9_]+)[\`\s\*]*\n+```[a-zA-Z0-9_\-]*\r?\n(.*?)```",
-        re.DOTALL | re.IGNORECASE
-    )
-    
-    matches = file_block_regex.findall(raw_response)
-    if matches:
-        for rel_path, code_body in matches:
-            norm_path = rel_path.strip().replace("\\", "/").lstrip("/")
-            dest = worktree_path / norm_path
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_text(clean_code_block(code_body), encoding="utf-8")
-            written_files.append(norm_path)
-        return written_files
+    if not extracted_items:
+        file_block_regex = re.compile(
+            r"(?:###|##|\*\*|---\s*\n)?\s*(?:FILE|ARCHIVO|File|Archivo)\s*[:\`]?\s*([a-zA-Z0-9_\-\./\\]+\.[a-zA-Z0-9_]+)[\`\s\*]*\n+```[a-zA-Z0-9_\-]*\r?\n(.*?)```",
+            re.DOTALL | re.IGNORECASE
+        )
+        matches = file_block_regex.findall(raw_response)
+        if matches:
+            for rel_path, code_body in matches:
+                norm_path = rel_path.strip().replace("\\", "/").lstrip("/")
+                extracted_items.append((norm_path, clean_code_block(code_body)))
 
     # 3. Fallback: match generic path followed by code block
-    generic_block_regex = re.compile(
-        r"([a-zA-Z0-9_\-\./\\]+\.(?:py|ts|js|json|md))\s*:\s*\n+```[a-zA-Z0-9_\-]*\r?\n(.*?)```",
-        re.DOTALL
-    )
-    matches_generic = generic_block_regex.findall(raw_response)
-    if matches_generic:
-        for rel_path, code_body in matches_generic:
-            norm_path = rel_path.strip().replace("\\", "/").lstrip("/")
-            dest = worktree_path / norm_path
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_text(clean_code_block(code_body), encoding="utf-8")
-            written_files.append(norm_path)
-        return written_files
+    if not extracted_items:
+        generic_block_regex = re.compile(
+            r"([a-zA-Z0-9_\-\./\\]+\.(?:py|ts|js|json|md))\s*:\s*\n+```[a-zA-Z0-9_\-]*\r?\n(.*?)```",
+            re.DOTALL
+        )
+        matches_generic = generic_block_regex.findall(raw_response)
+        if matches_generic:
+            for rel_path, code_body in matches_generic:
+                norm_path = rel_path.strip().replace("\\", "/").lstrip("/")
+                extracted_items.append((norm_path, clean_code_block(code_body)))
+
+    written_files = []
+    for rel_path, content in extracted_items:
+        safe_atomic_write(
+            worktree_path,
+            rel_path,
+            content,
+            allowed=allowed,
+            forbidden=forbidden,
+            is_model_write=True,
+        )
+        written_files.append(rel_path)
 
     return written_files
 
@@ -155,24 +163,25 @@ class DeepSeekAdapter:
         triage_feedback: Optional[dict] = None
     ) -> list[str]:
         """Worker Role: Generate or update code and test files within the worktree."""
+        allowed, forbidden = parse_spec_boundaries_content(spec_content)
         if self.is_simulation:
             # Generate mock files based on the specification
-            src_dir = worktree_path / "src" / "auth"
-            src_dir.mkdir(parents=True, exist_ok=True)
-            code_file = src_dir / "token_validator.py"
-            code_file.write_text(
+            safe_atomic_write(
+                worktree_path,
+                "src/auth/token_validator.py",
                 "import hmac\nimport hashlib\n\ndef validate_token(token: str, secret: str = 'key') -> bool:\n"
                 "    if not token or not isinstance(token, str):\n"
                 "        return False\n"
                 "    expected = hmac.new(secret.encode(), b'valid', hashlib.sha256).hexdigest()\n"
                 "    return hmac.compare_digest(token, expected)\n",
-                encoding="utf-8"
+                allowed=allowed,
+                forbidden=forbidden,
+                is_model_write=True,
             )
 
-            test_dir = worktree_path / "tests"
-            test_dir.mkdir(parents=True, exist_ok=True)
-            test_file = test_dir / "test_token_validator.py"
-            test_file.write_text(
+            safe_atomic_write(
+                worktree_path,
+                "tests/test_token_validator.py",
                 "import hmac\nimport hashlib\nfrom src.auth.token_validator import validate_token\n\n"
                 "def test_token_empty():\n"
                 "    assert validate_token('') is False\n"
@@ -180,9 +189,11 @@ class DeepSeekAdapter:
                 "def test_token_valid():\n"
                 "    valid_token = hmac.new(b'key', b'valid', hashlib.sha256).hexdigest()\n"
                 "    assert validate_token(valid_token) is True\n",
-                encoding="utf-8"
+                allowed=allowed,
+                forbidden=forbidden,
+                is_model_write=True,
             )
-            return [str(code_file.relative_to(worktree_path)), str(test_file.relative_to(worktree_path))]
+            return ["src/auth/token_validator.py", "tests/test_token_validator.py"]
 
         url = "https://api.deepseek.com/chat/completions"
         headers = {
@@ -207,7 +218,12 @@ class DeepSeekAdapter:
         resp.raise_for_status()
         raw_text = resp.json()["choices"][0]["message"]["content"]
         
-        written = extract_and_write_files(raw_text, worktree_path)
+        written = extract_and_write_files(
+            raw_text,
+            worktree_path,
+            allowed=allowed,
+            forbidden=forbidden,
+        )
         if not written:
             raise ValueError(f"Model returned no recognized file blocks (### FILE: <path>). Response:\n{raw_text[:300]}")
         return written

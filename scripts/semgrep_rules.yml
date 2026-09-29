@@ -1,0 +1,23 @@
+rules:
+  - id: controller.python.dynamic-execution
+    languages: [python]
+    severity: ERROR
+    message: Dynamic execution requires explicit human review.
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: exec(...)
+      - pattern: pickle.loads(...)
+      - pattern: pickle.load(...)
+  - id: controller.python.shell-execution
+    languages: [python]
+    severity: ERROR
+    message: Shell execution requires explicit human review.
+    pattern-either:
+      - pattern: subprocess.$F(..., shell=True, ...)
+      - pattern: os.system(...)
+      - pattern: os.popen(...)
+  - id: controller.python.tls-disabled
+    languages: [python]
+    severity: ERROR
+    message: TLS verification must remain enabled.
+    pattern: requests.$F(..., verify=False, ...)

@@ -124,9 +124,13 @@ def test_interrupted_recovery(tmp_path):
     state_dir = tmp_path / "state"
     sm1 = StateManager("TASK-REC", state_dir=str(state_dir), raise_on_halt=True)
     assert sm1.data["execution_status"] == "RUNNING"
-    
-    # Simulate restart / new instance
+
+    # Constructing a new instance must NOT infer running execution is dead
     sm2 = StateManager("TASK-REC", state_dir=str(state_dir), raise_on_halt=True)
+    assert sm2.data["execution_status"] == "RUNNING"
+
+    # Explicit mark_interrupted transitions status to INTERRUPTED
+    sm2.mark_interrupted()
     assert sm2.data["execution_status"] == "INTERRUPTED"
 
 def test_request_human_review(tmp_path, monkeypatch):
