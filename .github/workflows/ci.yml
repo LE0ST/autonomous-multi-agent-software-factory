@@ -1,4 +1,4 @@
-name: CI
+name: Change diff hygiene
 
 on:
   push:
@@ -6,26 +6,83 @@ on:
   pull_request:
     branches: [ main, dev ]
 
-jobs:
-  test:
-    name: Test Suite
-    runs-on: ubuntu-latest
+permissions:
+  contents: read
 
+jobs:
+  diff-hygiene:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          python-version: "3.11"
-          cache: "pip"
+          ref: ${{ github.event.pull_request.head.sha || github.event.after }}
+          fetch-depth: 0
+          persist-credentials: false
 
-      - name: Install dependencies
+      - name: Check whitespace in changed lines
+        shell: pwsh
+        env:
+          CI_EVENT_NAME: ${{ github.event_name }}
+          CI_PUSH_BEFORE: ${{ github.event.before }}
+          CI_PUSH_AFTER: ${{ github.event.after }}
+          CI_PR_BASE: ${{ github.event.pull_request.base.sha }}
+          CI_PR_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
-          python -m pip install --upgrade pip
-          pip install -e .
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
 
-      - name: Run tests
-        run: |
-          python -m pytest tests/
+          function Assert-Commit([string] $sha, [string] $label) {
+            if ($sha -cnotmatch '^[0-9a-f]{40}$' -or $sha -eq ('0' * 40)) {
+              throw "Invalid $label commit SHA."
+            }
+            $kind = git cat-file -t $sha
+            if ($LASTEXITCODE -ne 0 -or $kind -cne 'commit') {
+              throw "Unavailable $label commit: $sha"
+            }
+          }
+
+          switch ($env:CI_EVENT_NAME) {
+            'push' {
+              $head = $env:CI_PUSH_AFTER
+              Assert-Commit $head 'push head'
+              $before = $env:CI_PUSH_BEFORE
+              if ($before -cnotmatch '^[0-9a-f]{40}$') {
+                throw 'Invalid push before SHA.'
+              }
+              if ($before -eq ('0' * 40)) {
+                # SHA-1 empty tree: check the entire initial branch snapshot.
+                $base = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
+              } else {
+                Assert-Commit $before 'push base'
+                # Endpoint comparison includes the net changes of every pushed commit,
+                # and also supports a force update when both endpoints are available.
+                $base = $before
+              }
+            }
+            'pull_request' {
+              $head = $env:CI_PR_HEAD
+              Assert-Commit $head 'PR head'
+              Assert-Commit $env:CI_PR_BASE 'PR base'
+              $mergeBases = @(git merge-base --all $env:CI_PR_BASE $head)
+              if ($LASTEXITCODE -ne 0 -or $mergeBases.Count -ne 1) {
+                throw 'PR requires exactly one available merge base.'
+              }
+              $base = $mergeBases[0]
+              Assert-Commit $base 'PR merge base'
+            }
+            default { throw 'Unsupported CI event.' }
+          }
+
+          $checkedOut = git rev-parse --verify HEAD
+          if ($LASTEXITCODE -ne 0 -or $checkedOut -cne $head) {
+            throw 'Checkout does not match the event head SHA.'
+          }
+          git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab diff --check --no-ext-diff --no-textconv $base $head --
+          if ($LASTEXITCODE -ne 0) {
+            throw "Diff hygiene failed (git exit $LASTEXITCODE)."
+          }
+          Write-Output "Diff hygiene passed: $base -> $head"
