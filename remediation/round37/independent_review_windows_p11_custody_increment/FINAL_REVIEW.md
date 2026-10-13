@@ -1,0 +1,11 @@
+﻿# Independent review — A3 native P11 custody reader
+
+**Decision: A.** The read-only P11 custody source is accepted for the next bounded G1 source-preparation increment. It checks an explicitly selected frozen case against the frozen case table before any protected open; builds expected canonical P11 bytes from the accepted renderer and a separately supplied P10 digest; verifies the independent P11 seal; then reads only the fixed P11 path through retained relative handles and returns the exact bytes or typed failure.
+
+The root/P1/P4/P11 open profiles use the accepted general protected-object read profile, not the mutable snapshot profile. Identity, parent chain, volume/file identity, normalized path, type/reparse state, and owner/group/full DACL/protection state are checked from held handles before content is returned and again at the end. The P11 bytes are bounded, read twice with EOF/size checks, compared to the independently frozen canonical representation, and hashed against the supplied seal.
+
+All **60/60** Sol manifest rows matched. I independently extracted the active and terminal C++ literal byte vectors and recomputed their lengths and SHA-256 outside the test executable; both matched their fixed constants. A fresh MSVC x64 / SDK 10.0.26100.0 reviewer build passed with `/W4 /WX`; the executable exited 0 and reported 473 synthetic checks. The production-mode injected-constructor compile-negative and cross-mode link-negative behaved as intended. No protected path was opened and no IPC or token call occurred.
+
+Acceptance is limited to this source slice. The reader cannot itself prove that its `P11CustodyConfig` originated in G2 or that the invoking process is the A3 service; those must be enforced by later production composition, protected descriptors, and host evidence. Two-read comparison and share flags detect observable mismatches but do not prove continuous immutability or defeat every pre-existing writable mapping. No G1 approval or Stage A/S1/Round 3.7 result is granted.
+
+See [P11 authority and identity](P11_AUTHORITY_AND_IDENTITY_FINDINGS.md), [content stability and fail-closed behavior](CONTENT_STABILITY_AND_FAIL_CLOSED.md), [production API and provenance](PRODUCTION_API_AND_PROVENANCE.md), and [next G1 source step](NEXT_G1_SOURCE_STEP.md).
