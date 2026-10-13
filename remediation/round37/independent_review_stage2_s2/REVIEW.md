@@ -46,7 +46,7 @@ confirming the extension test was frozen before the production change.
 ## 2. Exact S2 production delta
 
 The only production file changed by S2 is `orchestrator/gate_controller.py`:
-- **Pre-S1:** `877ae73d527eff51…` (original vulnerable version)  
+- **Pre-S1:** `877ae73d527eff51…` (original vulnerable version)\
 - **Post-S1 / pre-S2:** `877ae73d527eff51…` (unchanged by S1)
 - **Post-S2 (current):** `5739f6449d1cf6ac…`
 
